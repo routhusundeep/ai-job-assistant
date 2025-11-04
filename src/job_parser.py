@@ -94,11 +94,7 @@ class ScrapingConfig:
 class JobParserAgent:
     """Scrapes LinkedIn job postings and stores them in SQLite."""
 
-    TITLE_SELECTORS: Iterable[str] = (
-        "a.job-card-list__title",
-        "a.base-card__full-link",
-        "a.job-card-container__link",
-    )
+    TITLE_SELECTORS: Iterable[str] = ("a.job-card-container__link strong",)
     COMPANY_SELECTORS: Iterable[str] = (
         "a.job-card-container__company-name",
         "span.job-card-container__primary-description",
@@ -314,58 +310,32 @@ class JobParserAgent:
     ) -> int:
         collected_before = len(collected)
         expected_on_page = min(self.config.page_size, self.max_jobs - collected_before)
+
+        card_locator = self._locate_job_cards(page)
+        total_cards = card_locator.count()
+        LOGGER.debug("Located %d job cards on current page.", total_cards)
+
+        if total_cards == 0:
+            return 0
+
+        total_cards = min(total_cards, self.config.page_size)
         scraped = 0
-        index = 0
-        stagnant_attempts = 0
-        max_stagnant_attempts = 15
 
-        while len(collected) < self.max_jobs:
-            card_locator = self._locate_job_cards(page)
-            total_cards = card_locator.count()
-            LOGGER.info("total number of cards in page:%d", total_cards)
-
-            if total_cards == 0:
-                LOGGER.debug("No job cards located on current page.")
-                stagnant_attempts += 1
-                self._scroll_results_step(page, stagnant_attempts)
-                page.wait_for_timeout(1000)
-                if stagnant_attempts >= max_stagnant_attempts:
-                    break
-                continue
-
-            if index >= total_cards:
-                if (
-                    total_cards >= self.config.page_size
-                    or stagnant_attempts >= max_stagnant_attempts
-                ):
-                    LOGGER.debug(
-                        "Reached end of available job cards (count=%d, attempts=%d).",
-                        total_cards,
-                        stagnant_attempts,
-                    )
-                    break
-
-                self._scroll_results_step(page, stagnant_attempts)
-                page.wait_for_timeout(1200)
-                stagnant_attempts += 1
-                continue
-
-            stagnant_attempts = 0
+        for index in range(total_cards):
+            if len(collected) >= self.max_jobs:
+                break
 
             card = card_locator.nth(index)
             job_id = self._resolve_job_id(card)
             if not job_id:
                 LOGGER.debug("Skipping job card without job id at index %d.", index)
-                index += 1
                 continue
             if job_id in seen_job_ids:
                 LOGGER.debug("Skipping duplicate job id %s at index %d.", job_id, index)
-                index += 1
                 continue
 
             posting = self._scrape_job_card(page, card, job_id)
             if posting is None:
-                index += 1
                 continue
 
             collected.append(posting)
@@ -391,15 +361,7 @@ class JobParserAgent:
                     total_count,
                 )
 
-            index += 1
             self._wait_between_jobs(page)
-
-            if index >= self.config.page_size:
-                LOGGER.debug(
-                    "Processed configured page size (%d) entries.",
-                    self.config.page_size,
-                )
-                break
 
         if scraped < expected_on_page and len(collected) < self.max_jobs:
             message = f"Only captured {scraped} jobs from current page (expected {expected_on_page})."
@@ -588,68 +550,8 @@ class JobParserAgent:
         return " ".join(deduped)
 
     def _ensure_job_cards_loaded(self, page: Page, collected_so_far: int) -> int:
-        target = max(1, min(self.config.page_size, self.max_jobs - collected_so_far))
-        max_attempts = 20
-        last_count = -1
-
-        for attempt in range(max_attempts):
-            locator = self._locate_job_cards(page)
-            count = locator.count()
-            if count >= target or count >= self.config.page_size:
-                return count
-
-            if count == last_count and attempt > 0:
-                LOGGER.debug(
-                    "Job card count stalled at %d; performing extra scroll.", count
-                )
-
-            self._scroll_results_step(page, attempt)
-            page.wait_for_timeout(1000)
-            last_count = count
-
-        locator = self._locate_job_cards(page)
-        return locator.count()
-
-    def _scroll_results_step(self, page: Page, attempt: int) -> None:
-        step_multiplier = 1 + (attempt * 0.4)
-        selectors = [
-            ".jobs-search-two-pane__results-list",
-            ".jobs-search__results-list",
-            ".jobs-search-results-list",
-            ".scaffold-layout__list-container",
-        ]
-        scrolled = False
-        for selector in selectors:
-            locator = page.locator(selector)
-            if locator.count() == 0:
-                continue
-            try:
-                locator.evaluate(
-                    "(element, step) => { element.scrollTop = element.scrollHeight; element.scrollBy({ top: element.clientHeight * step, behavior: 'instant' }); }",
-                    step_multiplier,
-                )
-                scrolled = True
-            except (PlaywrightTimeoutError, PlaywrightError):
-                continue
-        if not scrolled:
-            try:
-                page.evaluate(
-                    "(step) => window.scrollBy({ top: window.innerHeight * step, behavior: 'instant' });",
-                    step_multiplier,
-                )
-                scrolled = True
-            except (PlaywrightTimeoutError, PlaywrightError):
-                LOGGER.debug("Unable to perform window scroll step.")
-        if not scrolled:
-            try:
-                page.mouse.wheel(0, 800 * step_multiplier)
-            except (PlaywrightTimeoutError, PlaywrightError):
-                LOGGER.debug("Mouse wheel scroll failed to execute.")
-        else:
-            try:
-                page.keyboard.press("End")
-            except (PlaywrightTimeoutError, PlaywrightError):
-                LOGGER.debug("Keyboard End press failed during scroll.")
+        del collected_so_far
+        return self._locate_job_cards(page).count()
 
     def _wait_between_jobs(self, page: Page) -> None:
         per_job_delay = min(self.config.page_delay_seconds / 2, 1.5)
