@@ -1,11 +1,15 @@
-"""Credential loader for LinkedIn authentication."""
+"""Credential and authentication helpers for LinkedIn."""
 
 from __future__ import annotations
 
+import logging
+import re
 from dataclasses import dataclass
-from getpass import getpass
 from pathlib import Path
 from typing import Optional, Tuple
+
+from playwright.sync_api import Page
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 
 @dataclass
@@ -16,44 +20,15 @@ class Credentials:
     password: str
 
 
-def load_credentials(
-    username_arg: Optional[str],
-    password_arg: Optional[str],
-    *,
-    login_file: Path = Path("secure/login.txt"),
-    prompt_if_missing: bool = True,
-) -> Credentials:
-    """Resolve credentials from CLI args, login file, or interactive prompts.
+def load_credentials(login_file: Path = Path("secure/login.txt")) -> Credentials:
+    """Load credentials from the given login file."""
 
-    Args:
-        username_arg: Username provided via CLI argument.
-        password_arg: Password provided via CLI argument.
-        login_file: Path to file containing username/password on separate lines.
-        prompt_if_missing: Whether to fall back to interactive prompts when
-            credentials are not fully resolved.
+    if not login_file.exists():
+        raise FileNotFoundError(f"Login file not found at {login_file}")
 
-    Returns:
-        Credentials object with username and password.
-
-    Raises:
-        ValueError: If credentials cannot be resolved and prompting is disabled.
-    """
-
-    username, password = username_arg, password_arg
-
-    if (username is None or password is None) and login_file.exists():
-        file_username, file_password = _read_login_file(login_file)
-        username = username or file_username
-        password = password or file_password
-
-    if prompt_if_missing:
-        if not username:
-            username = input("LinkedIn username: ").strip()
-        if not password:
-            password = getpass("LinkedIn password: ")
-
+    username, password = _read_login_file(login_file)
     if not username or not password:
-        raise ValueError("LinkedIn credentials are required. Provide CLI args or populate secure/login.txt.")
+        raise ValueError(f"Login file {login_file} must contain username and password on separate lines.")
 
     return Credentials(username=username, password=password)
 
@@ -65,3 +40,37 @@ def _read_login_file(login_file: Path) -> Tuple[Optional[str], Optional[str]]:
     username = lines[0] if len(lines) >= 1 and lines[0] else None
     password = lines[1] if len(lines) >= 2 and lines[1] else None
     return username, password
+
+
+LOGIN_URL = "https://www.linkedin.com/login"
+LOGGER = logging.getLogger(__name__)
+
+
+def login_to_linkedin(
+    page: Page,
+    *,
+    wait_timeout: float,
+    login_file: Path = Path("secure/login.txt"),
+) -> None:
+    """Authenticate to LinkedIn via Playwright."""
+
+    creds = load_credentials(login_file)
+
+    page.goto(LOGIN_URL, wait_until="domcontentloaded")
+    page.fill("input#username", creds.username)
+    page.fill("input#password", creds.password)
+    try:
+        with page.expect_navigation(wait_until="domcontentloaded", timeout=wait_timeout * 1000):
+            page.click("button[type='submit']")
+    except PlaywrightTimeoutError:
+        LOGGER.debug("Navigation did not complete during login submit; continuing with current page.")
+
+    try:
+        page.wait_for_url(re.compile(r"linkedin\\.com/(feed|jobs|search)"), timeout=wait_timeout * 1000)
+    except PlaywrightTimeoutError:
+        LOGGER.debug("Login redirect did not reach feed/search within timeout.")
+
+    page.wait_for_load_state("domcontentloaded")
+
+    if "login" in page.url:
+        LOGGER.warning("Still on login page after attempting to authenticate. Check credentials or MFA status.")

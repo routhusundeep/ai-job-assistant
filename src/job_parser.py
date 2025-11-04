@@ -19,7 +19,7 @@ from playwright.sync_api import Locator, Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 
-from .login import load_credentials
+from .login import login_to_linkedin
 from .sql import ensure_schema, insert_job_dataclass
 
 LOGGER = logging.getLogger(__name__)
@@ -102,20 +102,17 @@ class JobParserAgent:
     def __init__(
         self,
         job_title: str,
-        username: str,
-        password: str,
         *,
         scraping_config: ScrapingConfig,
         max_jobs: int,
         salary_band: int,
         posted_time: str,
+        login_file: Path = Path("secure/login.txt"),
         database_path: Path = Path("data/jobs.db"),
         headless: bool = False,
         wait_timeout: float = 20.0,
     ) -> None:
         self.job_title = job_title
-        self.username = username
-        self.password = password
         self.config = scraping_config
         self.database_path = database_path
         self.headless = headless
@@ -123,6 +120,7 @@ class JobParserAgent:
         self.max_jobs = max(1, max_jobs)
         self.salary_band = max(1, min(salary_band, 9))
         self.posted_time = posted_time.strip()
+        self.login_file = login_file
         self._base_search_parts: Optional[ParseResult] = None
         self._base_query: Dict[str, str] = {}
         self._initial_offset: int = 0
@@ -137,7 +135,11 @@ class JobParserAgent:
             page = context.new_page()
             try:
                 LOGGER.info("Logging into LinkedIn.")
-                self._login(page)
+                login_to_linkedin(
+                    page,
+                    wait_timeout=self.wait_timeout,
+                    login_file=self.login_file,
+                )
                 LOGGER.info("Preparing job search for: %s", self.job_title)
                 self._initialize_job_search(page)
                 LOGGER.info("Collecting job postings for: %s", self.job_title)
@@ -151,35 +153,6 @@ class JobParserAgent:
 
     def _start_browser(self, playwright) -> Browser:
         return playwright.chromium.launch(headless=self.headless, slow_mo=0)
-
-    def _login(self, page: Page) -> None:
-        page.goto(LOGIN_URL, wait_until="domcontentloaded")
-        page.fill("input#username", self.username)
-        page.fill("input#password", self.password)
-        try:
-            with page.expect_navigation(
-                wait_until="domcontentloaded", timeout=self.wait_timeout * 1000
-            ):
-                page.click("button[type='submit']")
-        except PlaywrightTimeoutError:
-            LOGGER.debug(
-                "Navigation did not complete during login submit; continuing with current page."
-            )
-
-        try:
-            page.wait_for_url(
-                re.compile(r"linkedin\.com\/(feed|jobs|search)"),
-                timeout=self.wait_timeout * 1000,
-            )
-        except PlaywrightTimeoutError:
-            LOGGER.debug("Login redirect did not reach feed/search within timeout.")
-
-        page.wait_for_load_state("domcontentloaded")
-
-        if "login" in page.url:
-            LOGGER.warning(
-                "Still on login page after attempting to authenticate. Check credentials or MFA status."
-            )
 
     def _initialize_job_search(self, page: Page) -> None:
         search_url = self._build_search_url(self._initial_offset)
@@ -678,8 +651,6 @@ def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         required=True,
         help="Job title or keywords to search for.",
     )
-    parser.add_argument("--username", help="LinkedIn username (email).")
-    parser.add_argument("--password", help="LinkedIn password.")
     parser.add_argument(
         "--headless", action="store_true", help="Run browser in headless mode."
     )
@@ -732,23 +703,16 @@ def main(argv: Optional[List[str]] = None) -> None:
             "Chromedriver argument ignored: Playwright no longer relies on Selenium."
         )
 
-    credentials = load_credentials(
-        args.username,
-        args.password,
-        login_file=Path(args.login_file),
-    )
-
     scraping_config = ScrapingConfig.load(Path(args.scrape_config))
 
     agent = JobParserAgent(
         job_title=args.job_title,
-        username=credentials.username,
-        password=credentials.password,
         scraping_config=scraping_config,
         max_jobs=args.max_jobs,
         headless=args.headless,
         salary_band=args.salary_band,
         posted_time=args.posted_time,
+        login_file=Path(args.login_file),
     )
 
     jobs = agent.run()
