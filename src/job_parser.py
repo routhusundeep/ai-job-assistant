@@ -10,7 +10,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional
+from typing import Dict, Iterable, List, Optional, Tuple
 from urllib.parse import ParseResult, parse_qsl, quote_plus, urlencode, urlparse, urlunparse
 
 import yaml
@@ -38,6 +38,7 @@ class JobPosting:
     company: str
     description: str
     url: str
+    company_url: Optional[str] = None
 
 
 @dataclass
@@ -94,7 +95,12 @@ class JobParserAgent:
         "span.job-card-container__primary-description",
         "a.base-card__subtitle",
     )
-    COMPANY_LINK_SELECTOR: str = "a[href*='linkedin.com/company/']"
+    COMPANY_LINK_SELECTORS: Tuple[str, ...] = (
+        "a[href*='linkedin.com/company/']",
+        "a[href*='/company/']",
+        "a[data-tracking-control-name*='company']",
+        ".jobs-unified-top-card__primary-description a[href*='linkedin.com/company/']",
+    )
     JOB_CARD_LIST_SELECTORS: Iterable[str] = (
         "ul.jobs-search__results-list li[data-job-id]",
         "div.jobs-search-results-list li[data-job-id]",
@@ -123,12 +129,14 @@ class JobParserAgent:
         self.headless = headless
         self.wait_timeout = wait_timeout
         self.max_jobs = self._resolve_max_jobs(max_jobs_override)
+        self._last_db_total: int = 0
         self._base_search_parts: Optional[ParseResult] = None
         self._base_query: Dict[str, str] = {}
         self._initial_offset: int = 0
 
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         self._ensure_schema()
+        self._last_db_total = self._count_jobs()
 
     def run(self) -> List[JobPosting]:
         """Execute the full scraping pipeline."""
@@ -147,8 +155,11 @@ class JobParserAgent:
                 context.close()
                 browser.close()
 
-        LOGGER.info("Persisting %d job postings to %s", len(postings), self.database_path)
-        self._persist_jobs(postings)
+        LOGGER.info(
+            "Collected %d job postings this run. SQLite total: %d",
+            len(postings),
+            self._last_db_total,
+        )
         return postings
 
     def _start_browser(self, playwright) -> Browser:
@@ -227,8 +238,12 @@ class JobParserAgent:
 
         while len(collected) < self.max_jobs:
             search_url = self._build_search_url(offset)
-            if first_iteration and page.url.rstrip("/") == search_url.rstrip("/"):
-                LOGGER.info("Using already-loaded search results page: %s", search_url)
+            if first_iteration:
+                LOGGER.info(
+                    "Processing existing search results page (offset=%d): %s",
+                    offset,
+                    page.url,
+                )
             else:
                 LOGGER.info("Loading search results page: %s", search_url)
                 try:
@@ -252,9 +267,10 @@ class JobParserAgent:
                 LOGGER.warning("No job cards processed on this page; stopping pagination.")
                 break
 
-            first_iteration = False
             if len(collected) >= self.max_jobs:
                 break
+
+            first_iteration = False
             offset += self.config.page_size
 
         return collected
@@ -293,7 +309,25 @@ class JobParserAgent:
             collected.append(posting)
             seen_job_ids.add(job_id)
             scraped += 1
-            LOGGER.info("Captured job %s: %s @ %s", job_id, posting.title, posting.company)
+            inserted, total_count = self._persist_job(posting)
+            self._last_db_total = total_count
+
+            log_company = posting.company_url or posting.company
+            if inserted:
+                LOGGER.info(
+                    "Captured job %s: %s @ %s (sqlite total: %d)",
+                    job_id,
+                    posting.title,
+                    log_company,
+                    total_count,
+                )
+            else:
+                LOGGER.info(
+                    "Captured job %s already stored @ %s (sqlite total: %d)",
+                    job_id,
+                    log_company,
+                    total_count,
+                )
 
             if len(collected) >= self.max_jobs:
                 break
@@ -333,39 +367,87 @@ class JobParserAgent:
             LOGGER.debug("Timed out waiting for job details for %s.", job_id)
             return None
 
+        detail_panel = page.locator("#job-details").first
+
         title = self._extract_text(card, self.TITLE_SELECTORS) or "Unknown Title"
-        company = (
-            self._extract_company(card)
-            or self._extract_company(page.locator("#job-details"))
-            or self._extract_text(card, self.COMPANY_SELECTORS)
-            or "Unknown Company"
-        )
+        company_name, company_url = self._resolve_company_info(page, card, detail_panel)
+        if company_name is None:
+            company_name = self._extract_text(card, self.COMPANY_SELECTORS) or "Unknown Company"
 
         try:
-            description = page.locator("#job-details").inner_text().strip()
-        except PlaywrightTimeoutError:
+            description = detail_panel.inner_text().strip()
+        except (PlaywrightTimeoutError, PlaywrightError):
             LOGGER.debug("Unable to read description for %s.", job_id)
             description = ""
 
         return JobPosting(
             job_id=job_id,
             title=title,
-            company=company,
+            company=company_name,
+            company_url=company_url,
             description=description,
             url=f"https://www.linkedin.com/jobs/view/{job_id}/",
         )
 
-    def _extract_company(self, locator: Locator) -> Optional[str]:
-        try:
-            link = locator.locator(self.COMPANY_LINK_SELECTOR).first
+    def _resolve_company_info(
+        self,
+        page: Page,
+        card: Locator,
+        detail_panel: Locator,
+    ) -> Tuple[Optional[str], Optional[str]]:
+        scopes: List[Locator] = [
+            card,
+            detail_panel,
+            page.locator(".jobs-unified-top-card__primary-description"),
+            page.locator(".jobs-unified-top-card__content-container"),
+            page.locator(".jobs-unified-top-card__subtitle"),
+            page.locator(".jobs-details-top-card__company-url"),
+        ]
+
+        for scope in scopes:
+            name, url = self._extract_company_from_scope(scope)
+            if name or url:
+                return name, url
+
+        fallback = page.locator(self.COMPANY_LINK_SELECTORS[0]).first
+        if fallback.count() > 0:
+            return self._extract_company_from_link(fallback)
+        return None, None
+
+    def _extract_company_from_scope(self, scope: Locator) -> Tuple[Optional[str], Optional[str]]:
+        if scope.count() == 0:
+            return None, None
+        for selector in self.COMPANY_LINK_SELECTORS:
+            link = scope.locator(selector).first
             if link.count() == 0:
-                return None
-            text = link.inner_text().strip()
-            if text:
-                return text
+                continue
+            name, url = self._extract_company_from_link(link)
+            if name or url:
+                return name, url
+        return None, None
+
+    def _extract_company_from_link(self, link: Locator) -> Tuple[Optional[str], Optional[str]]:
+        try:
+            name = link.inner_text().strip() or None
         except (PlaywrightTimeoutError, PlaywrightError):
-            return None
-        return None
+            name = None
+        try:
+            href = link.get_attribute("href") or None
+        except (PlaywrightTimeoutError, PlaywrightError):
+            href = None
+        if href:
+            href = self._normalize_company_url(href)
+        return name, href
+
+    def _normalize_company_url(self, url: str) -> str:
+        cleaned = url.strip()
+        if cleaned.startswith("//"):
+            cleaned = f"https:{cleaned}"
+        elif cleaned.startswith("/"):
+            cleaned = f"https://www.linkedin.com{cleaned}"
+        if "?" in cleaned:
+            cleaned = cleaned.split("?", 1)[0]
+        return cleaned
 
     def _scroll_results_to_bottom(self, page: Page) -> None:
         container_selectors = [
@@ -446,27 +528,83 @@ class JobParserAgent:
                 """
                 CREATE TABLE IF NOT EXISTS job_postings (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    job_id TEXT NOT NULL UNIQUE,
+                    job_id TEXT,
                     title TEXT NOT NULL,
                     company TEXT NOT NULL,
+                    company_url TEXT,
                     description TEXT NOT NULL,
                     url TEXT NOT NULL UNIQUE,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
                 """
             )
+            columns = {
+                row[1] for row in conn.execute("PRAGMA table_info(job_postings)").fetchall()
+            }
+            if "company_url" not in columns:
+                conn.execute("ALTER TABLE job_postings ADD COLUMN company_url TEXT")
+            if "job_id" not in columns:
+                conn.execute("ALTER TABLE job_postings ADD COLUMN job_id TEXT")
+                rows = conn.execute("SELECT id, url FROM job_postings").fetchall()
+                for row_id, url in rows:
+                    job_id = self._derive_job_id_from_url(url or "")
+                    if job_id:
+                        conn.execute(
+                            "UPDATE job_postings SET job_id = ? WHERE id = ?",
+                            (job_id, row_id),
+                        )
+            try:
+                conn.execute(
+                    """
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_job_postings_job_id
+                    ON job_postings(job_id)
+                    WHERE job_id IS NOT NULL
+                    """
+                )
+            except sqlite3.IntegrityError:
+                LOGGER.warning("Duplicate job_id values detected; unique index not created.")
             conn.commit()
 
-    def _persist_jobs(self, jobs: List[JobPosting]) -> None:
+    def _persist_job(self, job: JobPosting) -> Tuple[bool, int]:
+        params = self._job_to_params(job)
         with sqlite3.connect(self.database_path) as conn:
-            conn.executemany(
+            cursor = conn.execute(
                 """
-                INSERT OR IGNORE INTO job_postings (job_id, title, company, description, url)
-                VALUES (:job_id, :title, :company, :description, :url)
+                INSERT OR IGNORE INTO job_postings (job_id, title, company, company_url, description, url)
+                VALUES (:job_id, :title, :company, :company_url, :description, :url)
                 """,
-                [job.__dict__ for job in jobs],
+                params,
             )
             conn.commit()
+            total_count = conn.execute("SELECT COUNT(*) FROM job_postings").fetchone()[0]
+        return cursor.rowcount > 0, total_count
+
+    @staticmethod
+    def _job_to_params(job: JobPosting) -> Dict[str, Optional[str]]:
+        return {
+            "job_id": job.job_id,
+            "title": job.title,
+            "company": job.company,
+            "company_url": job.company_url,
+            "description": job.description,
+            "url": job.url,
+        }
+
+    def _count_jobs(self) -> int:
+        if not self.database_path.exists():
+            return 0
+        with sqlite3.connect(self.database_path) as conn:
+            return conn.execute("SELECT COUNT(*) FROM job_postings").fetchone()[0]
+
+    @staticmethod
+    def _derive_job_id_from_url(url: str) -> Optional[str]:
+        if not url:
+            return None
+        match = re.search(r"/view/(\d+)", url)
+        if match:
+            return match.group(1)
+        digits = re.findall(r"\d+", url)
+        return digits[0] if digits else None
 
     def _resolve_max_jobs(self, override: Optional[int]) -> int:
         if override is None:
