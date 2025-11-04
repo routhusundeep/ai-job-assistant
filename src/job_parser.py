@@ -412,7 +412,8 @@ class JobParserAgent:
         if not text:
             return None, None
 
-        matches = re.findall(r"\$?\s*([0-9]+(?:\.[0-9]+)?)([kKmM]?)", text)
+        clean_text = text.split("+")[0]
+        matches = re.findall(r"\$?\s*([0-9]+(?:\.[0-9]+)?)([kKmM]?)", clean_text)
         if not matches:
             return None, None
 
@@ -630,7 +631,7 @@ class JobParserAgent:
 
     def _ensure_schema(self) -> None:
         with sqlite3.connect(self.database_path) as conn:
-            conn.execute(
+            conn.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS job_postings (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -644,46 +645,16 @@ class JobParserAgent:
                     description TEXT NOT NULL,
                     url TEXT NOT NULL UNIQUE,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
+                );
+
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_job_postings_job_id
+                    ON job_postings(job_id)
+                    WHERE job_id IS NOT NULL;
                 """
             )
-            columns = {
-                row[1]
-                for row in conn.execute("PRAGMA table_info(job_postings)").fetchall()
-            }
-            if "company_url" not in columns:
-                conn.execute("ALTER TABLE job_postings ADD COLUMN company_url TEXT")
-            if "recruiter_url" not in columns:
-                conn.execute("ALTER TABLE job_postings ADD COLUMN recruiter_url TEXT")
-            if "salary_min" not in columns:
-                conn.execute("ALTER TABLE job_postings ADD COLUMN salary_min REAL")
-            if "salary_max" not in columns:
-                conn.execute("ALTER TABLE job_postings ADD COLUMN salary_max REAL")
-            if "job_id" not in columns:
-                conn.execute("ALTER TABLE job_postings ADD COLUMN job_id TEXT")
-                rows = conn.execute("SELECT id, url FROM job_postings").fetchall()
-                for row_id, url in rows:
-                    job_id = self._derive_job_id_from_url(url or "")
-                    if job_id:
-                        conn.execute(
-                            "UPDATE job_postings SET job_id = ? WHERE id = ?",
-                            (job_id, row_id),
-                        )
-            try:
-                conn.execute(
-                    """
-                    CREATE UNIQUE INDEX IF NOT EXISTS idx_job_postings_job_id
-                    ON job_postings(job_id)
-                    WHERE job_id IS NOT NULL
-                    """
-                )
-            except sqlite3.IntegrityError:
-                LOGGER.warning(
-                    "Duplicate job_id values detected; unique index not created."
-                )
             conn.commit()
 
-    def _persist_job(self, job: JobPosting) -> Tuple[bool, int]:
+    def _persist_job(self, job: JobPosting) -> bool:
         params = self._job_to_params(job)
         with sqlite3.connect(self.database_path) as conn:
             cursor = conn.execute(
