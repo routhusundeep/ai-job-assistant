@@ -14,7 +14,7 @@ Stack: Python 3.10+, Playwright + `linkedin-api`/`linkedin-scraper`, `google-gen
 
 ## 💻 Development Setup
 ```bash
-git clone https://github.com/<your-repo>/ai-job-assistant.git
+git clone git@github.com:routhusundeep/ai-job-assistant.git
 cd ai-job-assistant
 python3 -m venv venv
 source venv/bin/activate
