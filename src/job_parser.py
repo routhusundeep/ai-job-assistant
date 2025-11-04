@@ -54,7 +54,6 @@ class ScrapingConfig:
     page_size: int
     extra_params: Dict[str, str]
     page_delay_seconds: float
-    max_jobs: int
 
     @classmethod
     def load(cls, path: Path) -> "ScrapingConfig":
@@ -66,8 +65,6 @@ class ScrapingConfig:
 
         search = raw.get("search") or {}
         rate_limits = raw.get("rate_limits") or {}
-        limits = raw.get("limits") or {}
-
         base_url = str(
             search.get("base_url") or "https://www.linkedin.com/jobs/search/"
         )
@@ -79,7 +76,6 @@ class ScrapingConfig:
         }
 
         page_delay_seconds = float(rate_limits.get("page_delay_seconds") or 3.0)
-        max_jobs = int(limits.get("max_jobs") or 25)
 
         return cls(
             base_url=base_url,
@@ -87,7 +83,6 @@ class ScrapingConfig:
             page_size=page_size,
             extra_params=extra_params,
             page_delay_seconds=page_delay_seconds,
-            max_jobs=max_jobs,
         )
 
 
@@ -115,10 +110,10 @@ class JobParserAgent:
         password: str,
         *,
         scraping_config: ScrapingConfig,
+        max_jobs: int,
         database_path: Path = Path("data/jobs.db"),
         headless: bool = False,
         wait_timeout: float = 20.0,
-        max_jobs_override: Optional[int] = None,
     ) -> None:
         self.job_title = job_title
         self.username = username
@@ -127,7 +122,7 @@ class JobParserAgent:
         self.database_path = database_path
         self.headless = headless
         self.wait_timeout = wait_timeout
-        self.max_jobs = self._resolve_max_jobs(max_jobs_override)
+        self.max_jobs = max(1, max_jobs)
         self._last_db_total: int = 0
         self._base_search_parts: Optional[ParseResult] = None
         self._base_query: Dict[str, str] = {}
@@ -693,11 +688,6 @@ class JobParserAgent:
         digits = re.findall(r"\d+", url)
         return digits[0] if digits else None
 
-    def _resolve_max_jobs(self, override: Optional[int]) -> int:
-        if override is None:
-            return self.config.max_jobs
-        return max(1, min(override, self.config.max_jobs))
-
     def _update_base_search_from_url(self, url: str) -> None:
         parsed = urlparse(url)
         query_pairs = parse_qsl(parsed.query, keep_blank_values=True)
@@ -748,7 +738,11 @@ def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         "--headless", action="store_true", help="Run browser in headless mode."
     )
     parser.add_argument(
-        "--max-jobs", type=int, help="Upper bound on number of jobs to scrape."
+        "--max-jobs",
+        dest="max_jobs",
+        type=int,
+        required=True,
+        help="Total number of jobs to scrape before stopping.",
     )
     parser.add_argument(
         "--login-file",
@@ -792,8 +786,8 @@ def main(argv: Optional[List[str]] = None) -> None:
         username=credentials.username,
         password=credentials.password,
         scraping_config=scraping_config,
+        max_jobs=args.max_jobs,
         headless=args.headless,
-        max_jobs_override=args.max_jobs,
     )
 
     jobs = agent.run()

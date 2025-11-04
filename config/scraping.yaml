@@ -7,5 +7,3 @@ search:
     refresh: "true"
 rate_limits:
   page_delay_seconds: 3
-limits:
-  max_jobs: 25
