@@ -674,11 +674,6 @@ def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         help="Path to login file with username/password (default: secure/login.txt).",
     )
     parser.add_argument(
-        "--chromedriver",
-        default="/opt/homebrew/bin/chromedriver",
-        help="Deprecated; ignored. Present for backwards compatibility.",
-    )
-    parser.add_argument(
         "--scrape-config",
         default="config/scraping.yaml",
         help="Path to YAML file containing scraping properties (default: config/scraping.yaml).",
@@ -705,11 +700,6 @@ def main(argv: Optional[List[str]] = None) -> None:
         level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
     )
     args = _parse_args(argv)
-
-    if args.chromedriver:
-        LOGGER.debug(
-            "Chromedriver argument ignored: Playwright no longer relies on Selenium."
-        )
 
     scraping_config = ScrapingConfig.load(Path(args.scrape_config))
 
