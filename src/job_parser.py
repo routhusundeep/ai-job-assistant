@@ -369,7 +369,8 @@ class JobParserAgent:
 
         detail_panel = page.locator("#job-details").first
 
-        title = self._extract_text(card, self.TITLE_SELECTORS) or "Unknown Title"
+        raw_title = self._extract_text(card, self.TITLE_SELECTORS) or "Unknown Title"
+        title = self._clean_title(raw_title)
         company_name, company_url = self._resolve_company_info(page, card, detail_panel)
         if company_name is None:
             company_name = self._extract_text(card, self.COMPANY_SELECTORS) or "Unknown Company"
@@ -427,27 +428,80 @@ class JobParserAgent:
         return None, None
 
     def _extract_company_from_link(self, link: Locator) -> Tuple[Optional[str], Optional[str]]:
-        try:
-            name = link.inner_text().strip() or None
-        except (PlaywrightTimeoutError, PlaywrightError):
-            name = None
+        href = None
         try:
             href = link.get_attribute("href") or None
         except (PlaywrightTimeoutError, PlaywrightError):
             href = None
-        if href:
-            href = self._normalize_company_url(href)
-        return name, href
 
-    def _normalize_company_url(self, url: str) -> str:
+        normalized_url, slug = self._normalize_company_url(href)
+
+        link_text = None
+        try:
+            link_text = link.inner_text().strip() or None
+        except (PlaywrightTimeoutError, PlaywrightError):
+            link_text = None
+
+        name = slug or link_text
+        return name, normalized_url
+
+    def _normalize_company_url(self, url: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
+        if not url:
+            return None, None
+
         cleaned = url.strip()
         if cleaned.startswith("//"):
             cleaned = f"https:{cleaned}"
         elif cleaned.startswith("/"):
             cleaned = f"https://www.linkedin.com{cleaned}"
-        if "?" in cleaned:
-            cleaned = cleaned.split("?", 1)[0]
-        return cleaned
+
+        parsed = urlparse(cleaned)
+        scheme = parsed.scheme or "https"
+        netloc = parsed.netloc or "www.linkedin.com"
+        path_segments = [segment for segment in parsed.path.split("/") if segment]
+
+        slug: Optional[str] = None
+        if "company" in path_segments:
+            idx = path_segments.index("company")
+            if idx + 1 < len(path_segments):
+                slug = path_segments[idx + 1]
+                normalized_path = f"/company/{slug}/"
+                parsed = parsed._replace(
+                    path=normalized_path,
+                    params="",
+                    query="",
+                    fragment="",
+                )
+        else:
+            parsed = parsed._replace(params="", query="", fragment="")
+
+        normalized = urlunparse(
+            ParseResult(
+                scheme=scheme,
+                netloc=netloc,
+                path=parsed.path,
+                params="",
+                query="",
+                fragment="",
+            )
+        )
+
+        return normalized, slug
+
+    @staticmethod
+    def _clean_title(raw_title: str) -> str:
+        lines = [line.strip() for line in raw_title.splitlines() if line.strip()]
+        if not lines:
+            return raw_title.strip()
+        seen: set[str] = set()
+        deduped: List[str] = []
+        for line in lines:
+            if line not in seen:
+                deduped.append(line)
+                seen.add(line)
+        if len(deduped) == 1:
+            return deduped[0]
+        return " ".join(deduped)
 
     def _scroll_results_to_bottom(self, page: Page) -> None:
         container_selectors = [
