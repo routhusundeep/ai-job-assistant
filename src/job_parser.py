@@ -1,0 +1,571 @@
+"""LinkedIn job scraper using Playwright and SQLite persistence."""
+
+from __future__ import annotations
+
+import argparse
+import logging
+import re
+import sqlite3
+import sys
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Dict, Iterable, List, Optional
+from urllib.parse import ParseResult, parse_qsl, quote_plus, urlencode, urlparse, urlunparse
+
+import yaml
+from playwright.sync_api import (
+    Browser,
+    Error as PlaywrightError,
+    Locator,
+    Page,
+    TimeoutError as PlaywrightTimeoutError,
+    sync_playwright,
+)
+
+from .login import load_credentials
+
+LOGGER = logging.getLogger(__name__)
+LOGIN_URL = "https://www.linkedin.com/login"
+
+
+@dataclass
+class JobPosting:
+    """Container for scraped job posting details."""
+
+    job_id: str
+    title: str
+    company: str
+    description: str
+    url: str
+
+
+@dataclass
+class ScrapingConfig:
+    """Configuration derived from config/scraping.yaml."""
+
+    base_url: str
+    start_param: str
+    page_size: int
+    extra_params: Dict[str, str]
+    page_delay_seconds: float
+    max_jobs: int
+
+    @classmethod
+    def load(cls, path: Path) -> "ScrapingConfig":
+        if not path.exists():
+            raise FileNotFoundError(f"Scraping config not found at {path}")
+
+        with path.open("r", encoding="utf-8") as handle:
+            raw = yaml.safe_load(handle) or {}
+
+        search = raw.get("search") or {}
+        rate_limits = raw.get("rate_limits") or {}
+        limits = raw.get("limits") or {}
+
+        base_url = str(search.get("base_url") or "https://www.linkedin.com/jobs/search/")
+        start_param = str(search.get("start_param") or "start")
+        page_size = int(search.get("page_size") or 25)
+        extra_params = {str(key): str(value) for key, value in (search.get("extra_params") or {}).items()}
+
+        page_delay_seconds = float(rate_limits.get("page_delay_seconds") or 3.0)
+        max_jobs = int(limits.get("max_jobs") or 25)
+
+        return cls(
+            base_url=base_url,
+            start_param=start_param,
+            page_size=page_size,
+            extra_params=extra_params,
+            page_delay_seconds=page_delay_seconds,
+            max_jobs=max_jobs,
+        )
+
+
+class JobParserAgent:
+    """Scrapes LinkedIn job postings and stores them in SQLite."""
+
+    TITLE_SELECTORS: Iterable[str] = (
+        "a.job-card-list__title",
+        "a.base-card__full-link",
+        "a.job-card-container__link",
+    )
+    COMPANY_SELECTORS: Iterable[str] = (
+        "a.job-card-container__company-name",
+        "span.job-card-container__primary-description",
+        "a.base-card__subtitle",
+    )
+    COMPANY_LINK_SELECTOR: str = "a[href*='linkedin.com/company/']"
+    JOB_CARD_LIST_SELECTORS: Iterable[str] = (
+        "ul.jobs-search__results-list li[data-job-id]",
+        "div.jobs-search-results-list li[data-job-id]",
+        "div.scaffold-layout__list-container li[data-job-id]",
+        "div.jobs-search__results-list li[data-job-id]",
+        "div.jobs-search-results-list [data-job-id][data-occludable-job-id]",
+    )
+
+    def __init__(
+        self,
+        job_title: str,
+        username: str,
+        password: str,
+        *,
+        scraping_config: ScrapingConfig,
+        database_path: Path = Path("data/jobs.db"),
+        headless: bool = False,
+        wait_timeout: float = 20.0,
+        max_jobs_override: Optional[int] = None,
+    ) -> None:
+        self.job_title = job_title
+        self.username = username
+        self.password = password
+        self.config = scraping_config
+        self.database_path = database_path
+        self.headless = headless
+        self.wait_timeout = wait_timeout
+        self.max_jobs = self._resolve_max_jobs(max_jobs_override)
+        self._base_search_parts: Optional[ParseResult] = None
+        self._base_query: Dict[str, str] = {}
+        self._initial_offset: int = 0
+
+        self.database_path.parent.mkdir(parents=True, exist_ok=True)
+        self._ensure_schema()
+
+    def run(self) -> List[JobPosting]:
+        """Execute the full scraping pipeline."""
+        with sync_playwright() as playwright:
+            browser = self._start_browser(playwright)
+            context = browser.new_context()
+            page = context.new_page()
+            try:
+                LOGGER.info("Logging into LinkedIn.")
+                self._login(page)
+                LOGGER.info("Preparing job search for: %s", self.job_title)
+                self._initialize_job_search(page)
+                LOGGER.info("Collecting job postings for: %s", self.job_title)
+                postings = self._collect_jobs(page)
+            finally:
+                context.close()
+                browser.close()
+
+        LOGGER.info("Persisting %d job postings to %s", len(postings), self.database_path)
+        self._persist_jobs(postings)
+        return postings
+
+    def _start_browser(self, playwright) -> Browser:
+        return playwright.chromium.launch(headless=self.headless, slow_mo=0)
+
+    def _login(self, page: Page) -> None:
+        page.goto(LOGIN_URL, wait_until="domcontentloaded")
+        page.fill("input#username", self.username)
+        page.fill("input#password", self.password)
+        try:
+            with page.expect_navigation(wait_until="domcontentloaded", timeout=self.wait_timeout * 1000):
+                page.click("button[type='submit']")
+        except PlaywrightTimeoutError:
+            LOGGER.debug("Navigation did not complete during login submit; continuing with current page.")
+
+        try:
+            page.wait_for_url(
+                re.compile(r"linkedin\.com\/(feed|jobs|search)"),
+                timeout=self.wait_timeout * 1000,
+            )
+        except PlaywrightTimeoutError:
+            LOGGER.debug("Login redirect did not reach feed/search within timeout.")
+
+        page.wait_for_load_state("domcontentloaded")
+
+        if "login" in page.url:
+            LOGGER.warning("Still on login page after attempting to authenticate. Check credentials or MFA status.")
+
+    def _initialize_job_search(self, page: Page) -> None:
+        search_url = (
+            "https://www.linkedin.com/search/results/all/"
+            f"?keywords={quote_plus(self.job_title)}&origin=TYPEAHEAD_HISTORY"
+        )
+        LOGGER.info("Navigating to LinkedIn blended search: %s", search_url)
+        try:
+            page.goto(search_url, wait_until="domcontentloaded", timeout=self.wait_timeout * 1000)
+        except PlaywrightTimeoutError:
+            LOGGER.debug("Timeout navigating to blended search; continuing with current page state.")
+        page.wait_for_load_state("domcontentloaded")
+        page.wait_for_timeout(500)
+        time.sleep(self.config.page_delay_seconds)
+
+        job_link_selector = (
+            "a[href*='jobs/search'][href*='origin=BLENDED_SEARCH_RESULT_NAVIGATION_JOB_CARD']"
+        )
+        try:
+            page.wait_for_selector(job_link_selector, timeout=self.wait_timeout * 1000)
+        except PlaywrightTimeoutError:
+            LOGGER.info("Blended job result not visible; falling back to direct job search URL.")
+            fallback_url = self._build_search_url(self._initial_offset)
+            LOGGER.info("Loading fallback job search page: %s", fallback_url)
+            page.goto(fallback_url, wait_until="domcontentloaded", timeout=self.wait_timeout * 1000)
+            page.wait_for_load_state("domcontentloaded")
+            time.sleep(self.config.page_delay_seconds)
+            self._update_base_search_from_url(fallback_url)
+            return
+
+        job_link = page.locator(job_link_selector).first
+        target_href = job_link.get_attribute("href")
+        LOGGER.info("Selecting blended job search result: %s", target_href)
+        with page.expect_navigation(wait_until="domcontentloaded", timeout=self.wait_timeout * 1000):
+            job_link.click()
+
+        page.wait_for_load_state("domcontentloaded")
+        time.sleep(self.config.page_delay_seconds)
+
+        current_url = page.url
+        LOGGER.info("Arrived at job search page: %s", current_url)
+        self._update_base_search_from_url(current_url)
+
+    def _collect_jobs(self, page: Page) -> List[JobPosting]:
+        collected: List[JobPosting] = []
+        seen_job_ids: set[str] = set()
+        offset = self._initial_offset
+        first_iteration = True
+
+        while len(collected) < self.max_jobs:
+            search_url = self._build_search_url(offset)
+            if first_iteration and page.url.rstrip("/") == search_url.rstrip("/"):
+                LOGGER.info("Using already-loaded search results page: %s", search_url)
+            else:
+                LOGGER.info("Loading search results page: %s", search_url)
+                try:
+                    page.goto(search_url, wait_until="domcontentloaded", timeout=self.wait_timeout * 1000)
+                except PlaywrightTimeoutError:
+                    LOGGER.debug("Timeout loading search results; retrying with relaxed wait.")
+                    page.goto(search_url, wait_until="domcontentloaded")
+                page.wait_for_load_state("domcontentloaded")
+            self._scroll_results_to_bottom(page)
+            time.sleep(self.config.page_delay_seconds)
+
+            scraped_this_page = self._scrape_jobs_on_page(page, collected, seen_job_ids)
+            LOGGER.info(
+                "Captured %d jobs from current page (offset=%d). Total collected: %d.",
+                scraped_this_page,
+                offset,
+                len(collected),
+            )
+
+            if scraped_this_page == 0:
+                LOGGER.warning("No job cards processed on this page; stopping pagination.")
+                break
+
+            first_iteration = False
+            if len(collected) >= self.max_jobs:
+                break
+            offset += self.config.page_size
+
+        return collected
+
+    def _scrape_jobs_on_page(
+        self,
+        page: Page,
+        collected: List[JobPosting],
+        seen_job_ids: set[str],
+    ) -> int:
+        card_locator = self._locate_job_cards(page)
+        total_cards = card_locator.count()
+        LOGGER.debug("Detected %d job cards on current page.", total_cards)
+
+        if total_cards == 0:
+            return 0
+
+        scraped = 0
+        for index in range(total_cards):
+            if len(collected) >= self.max_jobs:
+                break
+
+            card = card_locator.nth(index)
+            job_id = self._resolve_job_id(card)
+            if not job_id:
+                LOGGER.debug("Skipping job card without job id at index %d.", index)
+                continue
+            if job_id in seen_job_ids:
+                LOGGER.debug("Skipping duplicate job id %s at index %d.", job_id, index)
+                continue
+
+            posting = self._scrape_job_card(page, card, job_id)
+            if posting is None:
+                continue
+
+            collected.append(posting)
+            seen_job_ids.add(job_id)
+            scraped += 1
+            LOGGER.info("Captured job %s: %s @ %s", job_id, posting.title, posting.company)
+
+            if len(collected) >= self.max_jobs:
+                break
+
+            self._wait_between_jobs(page)
+
+        return scraped
+
+    def _locate_job_cards(self, page: Page) -> Locator:
+        for selector in self.JOB_CARD_LIST_SELECTORS:
+            locator = page.locator(selector)
+            if locator.count() > 0:
+                return locator
+        return page.locator("[data-job-id]")
+
+    def _resolve_job_id(self, card: Locator) -> Optional[str]:
+        job_id = card.get_attribute("data-job-id")
+        if job_id:
+            return job_id
+        descendant = card.locator("[data-job-id]").first
+        if descendant.count() > 0:
+            return descendant.get_attribute("data-job-id")
+        return None
+
+    def _scrape_job_card(self, page: Page, card: Locator, job_id: str) -> Optional[JobPosting]:
+        card.scroll_into_view_if_needed()
+        try:
+            card.click(timeout=self.wait_timeout * 1000)
+        except PlaywrightTimeoutError:
+            LOGGER.debug("Timeout clicking job card %s.", job_id)
+            return None
+
+        try:
+            page.wait_for_selector("#job-details", timeout=self.wait_timeout * 1000)
+            page.wait_for_timeout(500)
+        except PlaywrightTimeoutError:
+            LOGGER.debug("Timed out waiting for job details for %s.", job_id)
+            return None
+
+        title = self._extract_text(card, self.TITLE_SELECTORS) or "Unknown Title"
+        company = (
+            self._extract_company(card)
+            or self._extract_company(page.locator("#job-details"))
+            or self._extract_text(card, self.COMPANY_SELECTORS)
+            or "Unknown Company"
+        )
+
+        try:
+            description = page.locator("#job-details").inner_text().strip()
+        except PlaywrightTimeoutError:
+            LOGGER.debug("Unable to read description for %s.", job_id)
+            description = ""
+
+        return JobPosting(
+            job_id=job_id,
+            title=title,
+            company=company,
+            description=description,
+            url=f"https://www.linkedin.com/jobs/view/{job_id}/",
+        )
+
+    def _extract_company(self, locator: Locator) -> Optional[str]:
+        try:
+            link = locator.locator(self.COMPANY_LINK_SELECTOR).first
+            if link.count() == 0:
+                return None
+            text = link.inner_text().strip()
+            if text:
+                return text
+        except (PlaywrightTimeoutError, PlaywrightError):
+            return None
+        return None
+
+    def _scroll_results_to_bottom(self, page: Page) -> None:
+        container_selectors = [
+            ".jobs-search-two-pane__results-list",
+            ".jobs-search__results-list",
+            ".jobs-search-results-list",
+            ".scaffold-layout__list-container",
+        ]
+        scrolled = False
+        for selector in container_selectors:
+            locator = page.locator(selector)
+            if locator.count() == 0:
+                continue
+            try:
+                locator.evaluate("(el) => el.scrollTo(0, el.scrollHeight)")
+                scrolled = True
+                page.wait_for_timeout(300)
+            except (PlaywrightTimeoutError, PlaywrightError):
+                continue
+        if not scrolled:
+            try:
+                page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                page.wait_for_timeout(300)
+            except (PlaywrightTimeoutError, PlaywrightError):
+                LOGGER.debug("Unable to perform fallback window scroll.")
+
+    def _wait_between_jobs(self, page: Page) -> None:
+        delay_ms = int(max(self.config.page_delay_seconds, 0) * 1000)
+        if delay_ms > 0:
+            page.wait_for_timeout(delay_ms)
+
+    def _build_search_url(self, offset: int) -> str:
+        if self._base_search_parts:
+            parsed_base = self._base_search_parts
+            base_query = dict(self._base_query)
+        else:
+            parsed_base = urlparse(self.config.base_url)
+            base_query = {
+                key: value
+                for key, value in parse_qsl(parsed_base.query)
+                if key != self.config.start_param
+            }
+            base_query.update(self.config.extra_params)
+            base_query["keywords"] = self.job_title
+
+        params: Dict[str, str] = {
+            **base_query,
+            self.config.start_param: str(offset),
+        }
+
+        query = urlencode(params, doseq=True)
+        new_parts = ParseResult(
+            scheme=parsed_base.scheme,
+            netloc=parsed_base.netloc,
+            path=parsed_base.path,
+            params=parsed_base.params,
+            query=query,
+            fragment=parsed_base.fragment,
+        )
+        return urlunparse(new_parts)
+
+    def _extract_text(self, locator: Locator, selectors: Iterable[str]) -> Optional[str]:
+        for selector in selectors:
+            try:
+                element = locator.locator(selector).first
+                if element.count() == 0:
+                    continue
+                text = element.inner_text().strip()
+                if text:
+                    return text
+            except PlaywrightTimeoutError:
+                continue
+        return None
+
+    def _ensure_schema(self) -> None:
+        with sqlite3.connect(self.database_path) as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS job_postings (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    job_id TEXT NOT NULL UNIQUE,
+                    title TEXT NOT NULL,
+                    company TEXT NOT NULL,
+                    description TEXT NOT NULL,
+                    url TEXT NOT NULL UNIQUE,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            conn.commit()
+
+    def _persist_jobs(self, jobs: List[JobPosting]) -> None:
+        with sqlite3.connect(self.database_path) as conn:
+            conn.executemany(
+                """
+                INSERT OR IGNORE INTO job_postings (job_id, title, company, description, url)
+                VALUES (:job_id, :title, :company, :description, :url)
+                """,
+                [job.__dict__ for job in jobs],
+            )
+            conn.commit()
+
+    def _resolve_max_jobs(self, override: Optional[int]) -> int:
+        if override is None:
+            return self.config.max_jobs
+        return max(1, min(override, self.config.max_jobs))
+
+    def _update_base_search_from_url(self, url: str) -> None:
+        parsed = urlparse(url)
+        query_pairs = parse_qsl(parsed.query, keep_blank_values=True)
+        self._base_search_parts = ParseResult(
+            scheme=parsed.scheme,
+            netloc=parsed.netloc,
+            path=parsed.path,
+            params=parsed.params,
+            query="",
+            fragment=parsed.fragment,
+        )
+        self._base_query = {
+            key: value
+            for key, value in query_pairs
+            if key not in {self.config.start_param, "currentJobId"}
+        }
+        offset_value = next(
+            (value for key, value in query_pairs if key == self.config.start_param),
+            "0",
+        )
+        try:
+            self._initial_offset = int(offset_value or 0)
+        except ValueError:
+            LOGGER.debug("Unable to parse start offset '%s'; defaulting to 0.", offset_value)
+            self._initial_offset = 0
+        if "keywords" not in self._base_query or not self._base_query["keywords"]:
+            self._base_query["keywords"] = self.job_title
+        if self.config.extra_params:
+            for key, value in self.config.extra_params.items():
+                self._base_query.setdefault(key, value)
+
+
+def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Scrape LinkedIn job listings with Playwright.")
+    parser.add_argument(
+        "--job-title",
+        dest="job_title",
+        required=True,
+        help="Job title or keywords to search for.",
+    )
+    parser.add_argument("--username", help="LinkedIn username (email).")
+    parser.add_argument("--password", help="LinkedIn password.")
+    parser.add_argument("--headless", action="store_true", help="Run browser in headless mode.")
+    parser.add_argument("--max-jobs", type=int, help="Upper bound on number of jobs to scrape.")
+    parser.add_argument(
+        "--login-file",
+        default="secure/login.txt",
+        help="Path to login file with username/password (default: secure/login.txt).",
+    )
+    parser.add_argument(
+        "--chromedriver",
+        default="/opt/homebrew/bin/chromedriver",
+        help="Deprecated; ignored. Present for backwards compatibility.",
+    )
+    parser.add_argument(
+        "--scrape-config",
+        default="config/scraping.yaml",
+        help="Path to YAML file containing scraping properties (default: config/scraping.yaml).",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: Optional[List[str]] = None) -> None:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    args = _parse_args(argv)
+
+    if args.chromedriver:
+        LOGGER.debug("Chromedriver argument ignored: Playwright no longer relies on Selenium.")
+
+    credentials = load_credentials(
+        args.username,
+        args.password,
+        login_file=Path(args.login_file),
+    )
+
+    scraping_config = ScrapingConfig.load(Path(args.scrape_config))
+
+    agent = JobParserAgent(
+        job_title=args.job_title,
+        username=credentials.username,
+        password=credentials.password,
+        scraping_config=scraping_config,
+        headless=args.headless,
+        max_jobs_override=args.max_jobs,
+    )
+
+    jobs = agent.run()
+    LOGGER.info("Scraped %d jobs.", len(jobs))
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        LOGGER.info("Job scraping interrupted by user.")
+        sys.exit(1)

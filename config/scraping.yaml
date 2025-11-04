@@ -1,0 +1,11 @@
+search:
+  base_url: "https://www.linkedin.com/jobs/search/"
+  start_param: "start"
+  page_size: 25
+  extra_params:
+    origin: "JOBS_HOME_KEYWORD_AUTOCOMPLETE"
+    refresh: "true"
+rate_limits:
+  page_delay_seconds: 3
+limits:
+  max_jobs: 25
