@@ -124,14 +124,12 @@ class JobParserAgent:
         self.headless = headless
         self.wait_timeout = wait_timeout
         self.max_jobs = max(1, max_jobs)
-        self._last_db_total: int = 0
         self._base_search_parts: Optional[ParseResult] = None
         self._base_query: Dict[str, str] = {}
         self._initial_offset: int = 0
 
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         self._ensure_schema()
-        self._last_db_total = self._count_jobs()
 
     def run(self) -> List[JobPosting]:
         """Execute the full scraping pipeline."""
@@ -150,11 +148,7 @@ class JobParserAgent:
                 context.close()
                 browser.close()
 
-        LOGGER.info(
-            "Collected %d job postings this run. SQLite total: %d",
-            len(postings),
-            self._last_db_total,
-        )
+        LOGGER.info("Collected %d job postings this run.", len(postings))
         return postings
 
     def _start_browser(self, playwright) -> Browser:
@@ -337,27 +331,24 @@ class JobParserAgent:
             collected.append(posting)
             seen_job_ids.add(job_id)
             scraped += 1
-            inserted, total_count = self._persist_job(posting)
-            self._last_db_total = total_count
+            inserted = self._persist_job(posting)
 
             log_company = posting.company_url or posting.company
             recruiter_log = posting.recruiter_url or "(no recruiter)"
             if inserted:
                 LOGGER.info(
-                    "Captured job %s: %s @ %s recruiter: %s (sqlite total: %d)",
+                    "Captured job %s: %s @ %s recruiter: %s",
                     job_id,
                     posting.title,
                     log_company,
                     recruiter_log,
-                    total_count,
                 )
             else:
                 LOGGER.info(
-                    "Captured job %s already stored @ %s recruiter: %s (sqlite total: %d)",
+                    "Captured job %s already stored @ %s recruiter: %s",
                     job_id,
                     log_company,
                     recruiter_log,
-                    total_count,
                 )
 
             self._wait_between_jobs(page)
@@ -682,10 +673,7 @@ class JobParserAgent:
                 params,
             )
             conn.commit()
-            total_count = conn.execute("SELECT COUNT(*) FROM job_postings").fetchone()[
-                0
-            ]
-        return cursor.rowcount > 0, total_count
+        return cursor.rowcount > 0
 
     @staticmethod
     def _job_to_params(job: JobPosting) -> Dict[str, Optional[str]]:
@@ -698,12 +686,6 @@ class JobParserAgent:
             "description": job.description,
             "url": job.url,
         }
-
-    def _count_jobs(self) -> int:
-        if not self.database_path.exists():
-            return 0
-        with sqlite3.connect(self.database_path) as conn:
-            return conn.execute("SELECT COUNT(*) FROM job_postings").fetchone()[0]
 
     @staticmethod
     def _derive_job_id_from_url(url: str) -> Optional[str]:
