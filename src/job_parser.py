@@ -42,8 +42,8 @@ class JobPosting:
     company: str
     description: str
     url: str
+    recruiter_url: Optional[str]
     company_url: Optional[str] = None
-    recruiter_url: Optional[str] = None
 
 
 @dataclass
@@ -112,6 +112,8 @@ class JobParserAgent:
         *,
         scraping_config: ScrapingConfig,
         max_jobs: int,
+        salary_band: int,
+        posted_time: str,
         database_path: Path = Path("data/jobs.db"),
         headless: bool = False,
         wait_timeout: float = 20.0,
@@ -124,6 +126,8 @@ class JobParserAgent:
         self.headless = headless
         self.wait_timeout = wait_timeout
         self.max_jobs = max(1, max_jobs)
+        self.salary_band = max(1, min(salary_band, 9))
+        self.posted_time = posted_time.strip()
         self._base_search_parts: Optional[ParseResult] = None
         self._base_query: Dict[str, str] = {}
         self._initial_offset: int = 0
@@ -184,58 +188,13 @@ class JobParserAgent:
             )
 
     def _initialize_job_search(self, page: Page) -> None:
-        search_url = (
-            "https://www.linkedin.com/search/results/all/"
-            f"?keywords={quote_plus(self.job_title)}&origin=TYPEAHEAD_HISTORY"
-        )
-        LOGGER.info("Navigating to LinkedIn blended search: %s", search_url)
-        try:
-            page.goto(
-                search_url,
-                wait_until="domcontentloaded",
-                timeout=self.wait_timeout * 1000,
-            )
-        except PlaywrightTimeoutError:
-            LOGGER.debug(
-                "Timeout navigating to blended search; continuing with current page state."
-            )
-        page.wait_for_load_state("domcontentloaded")
-        page.wait_for_timeout(500)
-        time.sleep(self.config.page_delay_seconds)
-
-        job_link_selector = "a[href*='jobs/search'][href*='origin=BLENDED_SEARCH_RESULT_NAVIGATION_JOB_CARD']"
-        try:
-            page.wait_for_selector(job_link_selector, timeout=self.wait_timeout * 1000)
-        except PlaywrightTimeoutError:
-            LOGGER.info(
-                "Blended job result not visible; falling back to direct job search URL."
-            )
-            fallback_url = self._build_search_url(self._initial_offset)
-            LOGGER.info("Loading fallback job search page: %s", fallback_url)
-            page.goto(
-                fallback_url,
-                wait_until="domcontentloaded",
-                timeout=self.wait_timeout * 1000,
-            )
-            page.wait_for_load_state("domcontentloaded")
-            time.sleep(self.config.page_delay_seconds)
-            self._update_base_search_from_url(fallback_url)
-            return
-
-        job_link = page.locator(job_link_selector).first
-        target_href = job_link.get_attribute("href")
-        LOGGER.info("Selecting blended job search result: %s", target_href)
-        with page.expect_navigation(
-            wait_until="domcontentloaded", timeout=self.wait_timeout * 1000
-        ):
-            job_link.click()
-
+        search_url = self._build_search_url(self._initial_offset)
+        LOGGER.info("Navigating to LinkedIn job search: %s", search_url)
+        page.goto(search_url, wait_until="domcontentloaded", timeout=self.wait_timeout * 1000)
         page.wait_for_load_state("domcontentloaded")
         time.sleep(self.config.page_delay_seconds)
-
-        current_url = page.url
-        LOGGER.info("Arrived at job search page: %s", current_url)
-        self._update_base_search_from_url(current_url)
+        LOGGER.info("Arrived at job search page: %s", page.url)
+        self._update_base_search_from_url(page.url)
 
     def _collect_jobs(self, page: Page) -> List[JobPosting]:
         collected: List[JobPosting] = []
@@ -580,7 +539,14 @@ class JobParserAgent:
                 if key != self.config.start_param
             }
             base_query.update(self.config.extra_params)
-            base_query["keywords"] = self.job_title
+
+        base_query["keywords"] = self.job_title
+        base_query["origin"] = "JOB_SEARCH_PAGE_JOB_FILTER"
+        base_query["f_SB2"] = str(self.salary_band)
+        if self.posted_time:
+            base_query["f_TPR"] = self.posted_time
+        else:
+            base_query.pop("f_TPR", None)
 
         params: Dict[str, str] = {
             **base_query,
@@ -768,6 +734,19 @@ def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         default="config/scraping.yaml",
         help="Path to YAML file containing scraping properties (default: config/scraping.yaml).",
     )
+    parser.add_argument(
+        "--salary-band",
+        dest="salary_band",
+        type=int,
+        default=9,
+        help="LinkedIn salary band filter value for f_SB2 (1-9, default 9).",
+    )
+    parser.add_argument(
+        "--posted-time",
+        dest="posted_time",
+        default="",
+        help="LinkedIn posted time filter value for f_TPR (e.g., r86400). Empty string means any time.",
+    )
     return parser.parse_args(argv)
 
 
@@ -797,6 +776,8 @@ def main(argv: Optional[List[str]] = None) -> None:
         scraping_config=scraping_config,
         max_jobs=args.max_jobs,
         headless=args.headless,
+        salary_band=args.salary_band,
+        posted_time=args.posted_time,
     )
 
     jobs = agent.run()
