@@ -50,6 +50,7 @@ class ScrapingConfig:
     page_size: int
     extra_params: Dict[str, str]
     page_delay_seconds: float
+    selectors: Dict[str, List[str]]
 
     @classmethod
     def load(cls, path: Path) -> "ScrapingConfig":
@@ -72,6 +73,10 @@ class ScrapingConfig:
         }
 
         page_delay_seconds = float(rate_limits.get("page_delay_seconds") or 3.0)
+        selectors = {
+            key: list(map(str, value or []))
+            for key, value in (raw.get("selectors") or {}).items()
+        }
 
         return cls(
             base_url=base_url,
@@ -79,6 +84,7 @@ class ScrapingConfig:
             page_size=page_size,
             extra_params=extra_params,
             page_delay_seconds=page_delay_seconds,
+            selectors=selectors,
         )
 
 
@@ -296,7 +302,8 @@ class JobParserAgent:
         return scraped
 
     def _locate_job_cards(self, page: Page) -> Locator:
-        for selector in self.JOB_CARD_LIST_SELECTORS:
+        selectors = self.config.selectors.get("job_cards") or ["[data-occludable-job-id]"]
+        for selector in selectors:
             locator = page.locator(selector)
             if locator.count() > 0:
                 return locator
@@ -332,13 +339,11 @@ class JobParserAgent:
 
         detail_panel = page.locator("#job-details").first
 
-        raw_title = self._extract_text(card, self.TITLE_SELECTORS) or "Unknown Title"
+        raw_title = self._extract_text(card, self.config.selectors.get("title", [])) or "Unknown Title"
         title = self._clean_title(raw_title)
         company_name, company_url = self._resolve_company_info(page, card, detail_panel)
         if company_name is None:
-            company_name = (
-                self._extract_text(card, self.COMPANY_SELECTORS) or "Unknown Company"
-            )
+            company_name = self._extract_text(card, self.config.selectors.get("company", [])) or "Unknown Company"
 
         try:
             description = detail_panel.inner_text().strip()
@@ -433,9 +438,11 @@ class JobParserAgent:
             if name or url:
                 return name, url
 
-        fallback = page.locator(self.COMPANY_LINK_SELECTORS[0]).first
-        if fallback.count() > 0:
-            return self._extract_company_from_link(fallback)
+        company_link_selectors = self.config.selectors.get("company_links") or []
+        if company_link_selectors:
+            fallback = page.locator(company_link_selectors[0]).first
+            if fallback.count() > 0:
+                return self._extract_company_from_link(fallback)
         return None, None
 
     def _extract_company_from_scope(
@@ -443,7 +450,8 @@ class JobParserAgent:
     ) -> Tuple[Optional[str], Optional[str]]:
         if scope.count() == 0:
             return None, None
-        for selector in self.COMPANY_LINK_SELECTORS:
+        company_link_selectors = self.config.selectors.get("company_links") or []
+        for selector in company_link_selectors:
             link = scope.locator(selector).first
             if link.count() == 0:
                 continue

@@ -7,3 +7,17 @@ search:
     refresh: "true"
 rate_limits:
   page_delay_seconds: 3
+selectors:
+  job_cards:
+    - "[data-occludable-job-id]"
+  title:
+    - "a.job-card-container__link strong"
+  company:
+    - "a.job-card-container__company-name"
+    - "span.job-card-container__primary-description"
+    - "a.base-card__subtitle"
+  company_links:
+    - "a[href*='linkedin.com/company/']"
+    - "a[href*='/company/']"
+    - "a[data-tracking-control-name*='company']"
+    - ".jobs-unified-top-card__primary-description a[href*='linkedin.com/company/']"
