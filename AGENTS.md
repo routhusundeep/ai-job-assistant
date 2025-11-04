@@ -7,10 +7,11 @@ Project: AI-Powered Job Application Assistant (CS599, lead Sundeep Routhu) deliv
 Deliver one CLI workflow to parse LinkedIn posts, measure resume fit, tailor resumes, surface recruiters, and draft outreach emails. Every artifact persists to SQLite for reuse and audit.
 
 ## 🚀 Project Stages
-Stage 1 (active): LinkedIn ingestion—`JobParserAgent` captures postings with Playwright or API wrappers and stores descriptions plus metadata in SQLite. Stage 2 will layer resume-fit scoring and tailored resumes; Stage 3 adds recruiter discovery, outreach drafting, and reporting.
+
+Stage 1 (active): Playwright-driven LinkedIn ingestion—`JobParserAgent` logs in via `login_to_linkedin`, loads filters from CLI/YAML selectors, and writes recruiter+salary-enriched postings to SQLite through `src/sql.py`. Stage 2 will layer resume-fit scoring and tailored resumes; Stage 3 adds recruiter discovery, outreach drafting, and reporting.
 
 ## ⚙️ Technical Architecture
-Stack: Python 3.10+, Playwright + `linkedin-api`/`linkedin-scraper`, `google-generativeai`, SQLite, PyLaTeX, `click`, `pydantic`, `requests`, `tenacity`.
+Stack: Python 3.10+, Playwright (`playwright==1.48.0`), PyYAML (`PyYAML==6.0.2`), SQLite (schema + inserts in `src/sql.py`), CLI entrypoints.
 
 ## 💻 Development Setup
 ```bash
@@ -30,6 +31,17 @@ Optional VS Code tips: target `venv/bin/python`, run `black` on save, organize i
 - `EmailDraftAgent`: draft outreach copy.  
 Model choices and temperatures live in `agents/config.yaml`.
 
+### JobParserAgent (Stage 1)
+- Entry point: `src/job_parser.py` (run with `python -m src.job_parser`).
+- Uses Playwright to authenticate (via `login_to_linkedin`), apply LinkedIn filters (`--salary-band`, `--posted-time`), and paginate job listings.
+- Credentials read exclusively from `secure/login.txt`; no CLI usernames/passwords.
+- YAML config (`config/scraping.yaml`) supplies: base URL/start param/page size, extra query params, throttling (`rate_limits.page_delay_seconds`), and CSS selectors (`selectors.*`) for job cards, titles, company text, and company links.
+- Per job the scraper captures: job id, title, company name, company URL, recruiter profile URL, salary min/max (parsed from salary widget), description, and canonical URL.
+- Data persisted through `src/sql.py` (`ensure_schema`, `insert_job_dataclass`) into `job_postings` with a unique index on `job_id`.
+- Logging reports whether each job was inserted or already present, plus recruiter/salary summary.
+
+### Future Agents (Stages 2-3)
+
 ## 🧪 Evaluation Metrics
 Metrics: time per application ≤15 minutes, recruiter response lift +10–20%, resume cosine similarity ≥0.85, LLM output validity ≥95%, plus qualitative recruiter sentiment logged per run.
 
@@ -44,6 +56,12 @@ Follow PEP 8 with `black` (88 cols) and `isort`; group imports (stdlib, third pa
 
 ## 🧱 Project Structure
 Layout: `agents/` (pipeline modules), `utils/` (database, LLM client, validators), `tests/` (pytest), plus `main.py`, `requirements.txt`, `AGENTS.md`, `README.md`.
+Key Stage-1 modules:
+- `src/job_parser.py`: Orchestrates Playwright scraping, calls `login_to_linkedin`, and delegates DB writes to `src/sql.py`.
+- `src/login.py`: Provides `load_credentials` (file-based) and `login_to_linkedin` (Playwright auth).
+- `src/sql.py`: Owns SQLite schema DDL and job insertion helpers.
+- `config/scraping.yaml`: Defines base search params, rate limits, and all scraping selectors.
+
 
 ## 🧭 Next Steps
 Next: implement the baseline CLI pipeline, add agent-level metrics logging, run 3–5 pilot applications, and document outcomes for the CS599 deliverable.
