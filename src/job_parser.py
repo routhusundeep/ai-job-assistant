@@ -5,20 +5,12 @@ from __future__ import annotations
 import argparse
 import logging
 import re
-import sqlite3
 import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
-from urllib.parse import (
-    ParseResult,
-    parse_qsl,
-    quote_plus,
-    urlencode,
-    urlparse,
-    urlunparse,
-)
+from urllib.parse import ParseResult, parse_qsl, urlencode, urlparse, urlunparse
 
 import yaml
 from playwright.sync_api import Browser
@@ -28,6 +20,7 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 
 from .login import load_credentials
+from .sql import ensure_schema, insert_job_dataclass
 
 LOGGER = logging.getLogger(__name__)
 LOGIN_URL = "https://www.linkedin.com/login"
@@ -134,8 +127,7 @@ class JobParserAgent:
         self._base_query: Dict[str, str] = {}
         self._initial_offset: int = 0
 
-        self.database_path.parent.mkdir(parents=True, exist_ok=True)
-        self._ensure_schema()
+        ensure_schema(self.database_path)
 
     def run(self) -> List[JobPosting]:
         """Execute the full scraping pipeline."""
@@ -629,77 +621,8 @@ class JobParserAgent:
                 continue
         return None
 
-    def _ensure_schema(self) -> None:
-        with sqlite3.connect(self.database_path) as conn:
-            conn.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS job_postings (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    job_id TEXT,
-                    title TEXT NOT NULL,
-                    company TEXT NOT NULL,
-                    company_url TEXT,
-                    recruiter_url TEXT,
-                    salary_min REAL,
-                    salary_max REAL,
-                    description TEXT NOT NULL,
-                    url TEXT NOT NULL UNIQUE,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                );
-
-                CREATE UNIQUE INDEX IF NOT EXISTS idx_job_postings_job_id
-                    ON job_postings(job_id)
-                    WHERE job_id IS NOT NULL;
-                """
-            )
-            conn.commit()
-
     def _persist_job(self, job: JobPosting) -> bool:
-        params = self._job_to_params(job)
-        with sqlite3.connect(self.database_path) as conn:
-            cursor = conn.execute(
-                """
-                INSERT OR IGNORE INTO job_postings (
-                    job_id,
-                    title,
-                    company,
-                    company_url,
-                    recruiter_url,
-                    salary_min,
-                    salary_max,
-                    description,
-                    url
-                )
-                VALUES (
-                    :job_id,
-                    :title,
-                    :company,
-                    :company_url,
-                    :recruiter_url,
-                    :salary_min,
-                    :salary_max,
-                    :description,
-                    :url
-                )
-                """,
-                params,
-            )
-            conn.commit()
-        return cursor.rowcount > 0
-
-    @staticmethod
-    def _job_to_params(job: JobPosting) -> Dict[str, Optional[str]]:
-        return {
-            "job_id": job.job_id,
-            "title": job.title,
-            "company": job.company,
-            "company_url": job.company_url,
-            "recruiter_url": job.recruiter_url,
-            "salary_min": job.salary_min,
-            "salary_max": job.salary_max,
-            "description": job.description,
-            "url": job.url,
-        }
+        return insert_job_dataclass(self.database_path, job)
 
     @staticmethod
     def _derive_job_id_from_url(url: str) -> Optional[str]:
