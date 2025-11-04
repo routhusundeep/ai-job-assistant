@@ -44,6 +44,8 @@ class JobPosting:
     url: str
     recruiter_url: Optional[str]
     company_url: Optional[str] = None
+    salary_min: Optional[float] = None
+    salary_max: Optional[float] = None
 
 
 @dataclass
@@ -294,20 +296,29 @@ class JobParserAgent:
 
             log_company = posting.company_url or posting.company
             recruiter_log = posting.recruiter_url or "(no recruiter)"
+            salary_log = "-"
+            if posting.salary_min is not None:
+                if posting.salary_max is not None and posting.salary_max != posting.salary_min:
+                    salary_log = f"{int(posting.salary_min)}-{int(posting.salary_max)}"
+                else:
+                    salary_log = f"{int(posting.salary_min)}"
+
             if inserted:
                 LOGGER.info(
-                    "Captured job %s: %s @ %s recruiter: %s",
+                    "Captured job %s: %s @ %s recruiter: %s salary: %s",
                     job_id,
                     posting.title,
                     log_company,
                     recruiter_log,
+                    salary_log,
                 )
             else:
                 LOGGER.info(
-                    "Captured job %s already stored @ %s recruiter: %s",
+                    "Captured job %s already stored @ %s recruiter: %s salary: %s",
                     job_id,
                     log_company,
                     recruiter_log,
+                    salary_log,
                 )
 
             self._wait_between_jobs(page)
@@ -371,6 +382,7 @@ class JobParserAgent:
             description = ""
 
         recruiter_url = self._extract_recruiter_url(page)
+        salary_min, salary_max = self._extract_salary_range(page)
 
         return JobPosting(
             job_id=job_id,
@@ -378,9 +390,46 @@ class JobParserAgent:
             company=company_name,
             company_url=company_url,
             recruiter_url=recruiter_url,
+            salary_min=salary_min,
+            salary_max=salary_max,
             description=description,
             url=f"https://www.linkedin.com/jobs/view/{job_id}/",
         )
+
+    def _extract_salary_range(self, page: Page) -> Tuple[Optional[float], Optional[float]]:
+        selector = (
+            ".job-details-fit-level-preferences > "
+            "button:nth-child(1) > span:nth-child(1) > strong:nth-child(1)"
+        )
+        locator = page.locator(selector).first
+        if locator.count() == 0:
+            return None, None
+        try:
+            text = locator.inner_text().strip()
+        except (PlaywrightTimeoutError, PlaywrightError):
+            return None, None
+
+        if not text:
+            return None, None
+
+        matches = re.findall(r"\$?\s*([0-9]+(?:\.[0-9]+)?)([kKmM]?)", text)
+        if not matches:
+            return None, None
+
+        def to_number(value: str, suffix: str) -> float:
+            number = float(value)
+            suffix = suffix.lower()
+            if suffix == "m":
+                number *= 1_000_000
+            elif suffix == "k":
+                number *= 1_000
+            return number
+
+        min_value = to_number(*matches[0])
+        max_value = (
+            to_number(*matches[1]) if len(matches) > 1 else min_value
+        )
+        return min_value, max_value
 
     def _extract_recruiter_url(self, page: Page) -> Optional[str]:
         selector = (
@@ -590,6 +639,8 @@ class JobParserAgent:
                     company TEXT NOT NULL,
                     company_url TEXT,
                     recruiter_url TEXT,
+                    salary_min REAL,
+                    salary_max REAL,
                     description TEXT NOT NULL,
                     url TEXT NOT NULL UNIQUE,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -604,6 +655,10 @@ class JobParserAgent:
                 conn.execute("ALTER TABLE job_postings ADD COLUMN company_url TEXT")
             if "recruiter_url" not in columns:
                 conn.execute("ALTER TABLE job_postings ADD COLUMN recruiter_url TEXT")
+            if "salary_min" not in columns:
+                conn.execute("ALTER TABLE job_postings ADD COLUMN salary_min REAL")
+            if "salary_max" not in columns:
+                conn.execute("ALTER TABLE job_postings ADD COLUMN salary_max REAL")
             if "job_id" not in columns:
                 conn.execute("ALTER TABLE job_postings ADD COLUMN job_id TEXT")
                 rows = conn.execute("SELECT id, url FROM job_postings").fetchall()
@@ -633,8 +688,28 @@ class JobParserAgent:
         with sqlite3.connect(self.database_path) as conn:
             cursor = conn.execute(
                 """
-                INSERT OR IGNORE INTO job_postings (job_id, title, company, company_url, recruiter_url, description, url)
-                VALUES (:job_id, :title, :company, :company_url, :recruiter_url, :description, :url)
+                INSERT OR IGNORE INTO job_postings (
+                    job_id,
+                    title,
+                    company,
+                    company_url,
+                    recruiter_url,
+                    salary_min,
+                    salary_max,
+                    description,
+                    url
+                )
+                VALUES (
+                    :job_id,
+                    :title,
+                    :company,
+                    :company_url,
+                    :recruiter_url,
+                    :salary_min,
+                    :salary_max,
+                    :description,
+                    :url
+                )
                 """,
                 params,
             )
@@ -649,6 +724,8 @@ class JobParserAgent:
             "company": job.company,
             "company_url": job.company_url,
             "recruiter_url": job.recruiter_url,
+            "salary_min": job.salary_min,
+            "salary_max": job.salary_max,
             "description": job.description,
             "url": job.url,
         }
