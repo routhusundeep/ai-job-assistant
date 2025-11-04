@@ -11,17 +11,21 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
-from urllib.parse import ParseResult, parse_qsl, quote_plus, urlencode, urlparse, urlunparse
+from urllib.parse import (
+    ParseResult,
+    parse_qsl,
+    quote_plus,
+    urlencode,
+    urlparse,
+    urlunparse,
+)
 
 import yaml
-from playwright.sync_api import (
-    Browser,
-    Error as PlaywrightError,
-    Locator,
-    Page,
-    TimeoutError as PlaywrightTimeoutError,
-    sync_playwright,
-)
+from playwright.sync_api import Browser
+from playwright.sync_api import Error as PlaywrightError
+from playwright.sync_api import Locator, Page
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+from playwright.sync_api import sync_playwright
 
 from .login import load_credentials
 
@@ -64,10 +68,15 @@ class ScrapingConfig:
         rate_limits = raw.get("rate_limits") or {}
         limits = raw.get("limits") or {}
 
-        base_url = str(search.get("base_url") or "https://www.linkedin.com/jobs/search/")
+        base_url = str(
+            search.get("base_url") or "https://www.linkedin.com/jobs/search/"
+        )
         start_param = str(search.get("start_param") or "start")
         page_size = int(search.get("page_size") or 25)
-        extra_params = {str(key): str(value) for key, value in (search.get("extra_params") or {}).items()}
+        extra_params = {
+            str(key): str(value)
+            for key, value in (search.get("extra_params") or {}).items()
+        }
 
         page_delay_seconds = float(rate_limits.get("page_delay_seconds") or 3.0)
         max_jobs = int(limits.get("max_jobs") or 25)
@@ -101,13 +110,7 @@ class JobParserAgent:
         "a[data-tracking-control-name*='company']",
         ".jobs-unified-top-card__primary-description a[href*='linkedin.com/company/']",
     )
-    JOB_CARD_LIST_SELECTORS: Iterable[str] = (
-        "ul.jobs-search__results-list li[data-job-id]",
-        "div.jobs-search-results-list li[data-job-id]",
-        "div.scaffold-layout__list-container li[data-job-id]",
-        "div.jobs-search__results-list li[data-job-id]",
-        "div.jobs-search-results-list [data-job-id][data-occludable-job-id]",
-    )
+    JOB_CARD_LIST_SELECTORS: Iterable[str] = ("[data-occludable-job-id]",)
 
     def __init__(
         self,
@@ -170,10 +173,14 @@ class JobParserAgent:
         page.fill("input#username", self.username)
         page.fill("input#password", self.password)
         try:
-            with page.expect_navigation(wait_until="domcontentloaded", timeout=self.wait_timeout * 1000):
+            with page.expect_navigation(
+                wait_until="domcontentloaded", timeout=self.wait_timeout * 1000
+            ):
                 page.click("button[type='submit']")
         except PlaywrightTimeoutError:
-            LOGGER.debug("Navigation did not complete during login submit; continuing with current page.")
+            LOGGER.debug(
+                "Navigation did not complete during login submit; continuing with current page."
+            )
 
         try:
             page.wait_for_url(
@@ -186,7 +193,9 @@ class JobParserAgent:
         page.wait_for_load_state("domcontentloaded")
 
         if "login" in page.url:
-            LOGGER.warning("Still on login page after attempting to authenticate. Check credentials or MFA status.")
+            LOGGER.warning(
+                "Still on login page after attempting to authenticate. Check credentials or MFA status."
+            )
 
     def _initialize_job_search(self, page: Page) -> None:
         search_url = (
@@ -195,23 +204,33 @@ class JobParserAgent:
         )
         LOGGER.info("Navigating to LinkedIn blended search: %s", search_url)
         try:
-            page.goto(search_url, wait_until="domcontentloaded", timeout=self.wait_timeout * 1000)
+            page.goto(
+                search_url,
+                wait_until="domcontentloaded",
+                timeout=self.wait_timeout * 1000,
+            )
         except PlaywrightTimeoutError:
-            LOGGER.debug("Timeout navigating to blended search; continuing with current page state.")
+            LOGGER.debug(
+                "Timeout navigating to blended search; continuing with current page state."
+            )
         page.wait_for_load_state("domcontentloaded")
         page.wait_for_timeout(500)
         time.sleep(self.config.page_delay_seconds)
 
-        job_link_selector = (
-            "a[href*='jobs/search'][href*='origin=BLENDED_SEARCH_RESULT_NAVIGATION_JOB_CARD']"
-        )
+        job_link_selector = "a[href*='jobs/search'][href*='origin=BLENDED_SEARCH_RESULT_NAVIGATION_JOB_CARD']"
         try:
             page.wait_for_selector(job_link_selector, timeout=self.wait_timeout * 1000)
         except PlaywrightTimeoutError:
-            LOGGER.info("Blended job result not visible; falling back to direct job search URL.")
+            LOGGER.info(
+                "Blended job result not visible; falling back to direct job search URL."
+            )
             fallback_url = self._build_search_url(self._initial_offset)
             LOGGER.info("Loading fallback job search page: %s", fallback_url)
-            page.goto(fallback_url, wait_until="domcontentloaded", timeout=self.wait_timeout * 1000)
+            page.goto(
+                fallback_url,
+                wait_until="domcontentloaded",
+                timeout=self.wait_timeout * 1000,
+            )
             page.wait_for_load_state("domcontentloaded")
             time.sleep(self.config.page_delay_seconds)
             self._update_base_search_from_url(fallback_url)
@@ -220,7 +239,9 @@ class JobParserAgent:
         job_link = page.locator(job_link_selector).first
         target_href = job_link.get_attribute("href")
         LOGGER.info("Selecting blended job search result: %s", target_href)
-        with page.expect_navigation(wait_until="domcontentloaded", timeout=self.wait_timeout * 1000):
+        with page.expect_navigation(
+            wait_until="domcontentloaded", timeout=self.wait_timeout * 1000
+        ):
             job_link.click()
 
         page.wait_for_load_state("domcontentloaded")
@@ -247,12 +268,20 @@ class JobParserAgent:
             else:
                 LOGGER.info("Loading search results page: %s", search_url)
                 try:
-                    page.goto(search_url, wait_until="domcontentloaded", timeout=self.wait_timeout * 1000)
+                    page.goto(
+                        search_url,
+                        wait_until="domcontentloaded",
+                        timeout=self.wait_timeout * 1000,
+                    )
                 except PlaywrightTimeoutError:
-                    LOGGER.debug("Timeout loading search results; retrying with relaxed wait.")
+                    LOGGER.debug(
+                        "Timeout loading search results; retrying with relaxed wait."
+                    )
                     page.goto(search_url, wait_until="domcontentloaded")
                 page.wait_for_load_state("domcontentloaded")
-            self._scroll_results_to_bottom(page)
+
+            loaded_count = self._ensure_job_cards_loaded(page, len(collected))
+            LOGGER.debug("Job cards discovered after load: %d", loaded_count)
             time.sleep(self.config.page_delay_seconds)
 
             scraped_this_page = self._scrape_jobs_on_page(page, collected, seen_job_ids)
@@ -264,7 +293,9 @@ class JobParserAgent:
             )
 
             if scraped_this_page == 0:
-                LOGGER.warning("No job cards processed on this page; stopping pagination.")
+                LOGGER.warning(
+                    "No job cards processed on this page; stopping pagination."
+                )
                 break
 
             if len(collected) >= self.max_jobs:
@@ -281,29 +312,60 @@ class JobParserAgent:
         collected: List[JobPosting],
         seen_job_ids: set[str],
     ) -> int:
-        card_locator = self._locate_job_cards(page)
-        total_cards = card_locator.count()
-        LOGGER.debug("Detected %d job cards on current page.", total_cards)
-
-        if total_cards == 0:
-            return 0
-
+        collected_before = len(collected)
+        expected_on_page = min(self.config.page_size, self.max_jobs - collected_before)
         scraped = 0
-        for index in range(total_cards):
-            if len(collected) >= self.max_jobs:
-                break
+        index = 0
+        stagnant_attempts = 0
+        max_stagnant_attempts = 15
+
+        while len(collected) < self.max_jobs:
+            card_locator = self._locate_job_cards(page)
+            total_cards = card_locator.count()
+            LOGGER.info("total number of cards in page:%d", total_cards)
+
+            if total_cards == 0:
+                LOGGER.debug("No job cards located on current page.")
+                stagnant_attempts += 1
+                self._scroll_results_step(page, stagnant_attempts)
+                page.wait_for_timeout(1000)
+                if stagnant_attempts >= max_stagnant_attempts:
+                    break
+                continue
+
+            if index >= total_cards:
+                if (
+                    total_cards >= self.config.page_size
+                    or stagnant_attempts >= max_stagnant_attempts
+                ):
+                    LOGGER.debug(
+                        "Reached end of available job cards (count=%d, attempts=%d).",
+                        total_cards,
+                        stagnant_attempts,
+                    )
+                    break
+
+                self._scroll_results_step(page, stagnant_attempts)
+                page.wait_for_timeout(1200)
+                stagnant_attempts += 1
+                continue
+
+            stagnant_attempts = 0
 
             card = card_locator.nth(index)
             job_id = self._resolve_job_id(card)
             if not job_id:
                 LOGGER.debug("Skipping job card without job id at index %d.", index)
+                index += 1
                 continue
             if job_id in seen_job_ids:
                 LOGGER.debug("Skipping duplicate job id %s at index %d.", job_id, index)
+                index += 1
                 continue
 
             posting = self._scrape_job_card(page, card, job_id)
             if posting is None:
+                index += 1
                 continue
 
             collected.append(posting)
@@ -329,10 +391,20 @@ class JobParserAgent:
                     total_count,
                 )
 
-            if len(collected) >= self.max_jobs:
+            index += 1
+            self._wait_between_jobs(page)
+
+            if index >= self.config.page_size:
+                LOGGER.debug(
+                    "Processed configured page size (%d) entries.",
+                    self.config.page_size,
+                )
                 break
 
-            self._wait_between_jobs(page)
+        if scraped < expected_on_page and len(collected) < self.max_jobs:
+            message = f"Only captured {scraped} jobs from current page (expected {expected_on_page})."
+            LOGGER.error(message)
+            raise RuntimeError(message)
 
         return scraped
 
@@ -341,10 +413,12 @@ class JobParserAgent:
             locator = page.locator(selector)
             if locator.count() > 0:
                 return locator
-        return page.locator("[data-job-id]")
+        return page.locator("[data-job-id], [data-occludable-job-id]")
 
     def _resolve_job_id(self, card: Locator) -> Optional[str]:
-        job_id = card.get_attribute("data-job-id")
+        job_id = card.get_attribute("data-job-id") or card.get_attribute(
+            "data-occludable-job-id"
+        )
         if job_id:
             return job_id
         descendant = card.locator("[data-job-id]").first
@@ -352,7 +426,9 @@ class JobParserAgent:
             return descendant.get_attribute("data-job-id")
         return None
 
-    def _scrape_job_card(self, page: Page, card: Locator, job_id: str) -> Optional[JobPosting]:
+    def _scrape_job_card(
+        self, page: Page, card: Locator, job_id: str
+    ) -> Optional[JobPosting]:
         card.scroll_into_view_if_needed()
         try:
             card.click(timeout=self.wait_timeout * 1000)
@@ -373,7 +449,9 @@ class JobParserAgent:
         title = self._clean_title(raw_title)
         company_name, company_url = self._resolve_company_info(page, card, detail_panel)
         if company_name is None:
-            company_name = self._extract_text(card, self.COMPANY_SELECTORS) or "Unknown Company"
+            company_name = (
+                self._extract_text(card, self.COMPANY_SELECTORS) or "Unknown Company"
+            )
 
         try:
             description = detail_panel.inner_text().strip()
@@ -415,7 +493,9 @@ class JobParserAgent:
             return self._extract_company_from_link(fallback)
         return None, None
 
-    def _extract_company_from_scope(self, scope: Locator) -> Tuple[Optional[str], Optional[str]]:
+    def _extract_company_from_scope(
+        self, scope: Locator
+    ) -> Tuple[Optional[str], Optional[str]]:
         if scope.count() == 0:
             return None, None
         for selector in self.COMPANY_LINK_SELECTORS:
@@ -427,7 +507,9 @@ class JobParserAgent:
                 return name, url
         return None, None
 
-    def _extract_company_from_link(self, link: Locator) -> Tuple[Optional[str], Optional[str]]:
+    def _extract_company_from_link(
+        self, link: Locator
+    ) -> Tuple[Optional[str], Optional[str]]:
         href = None
         try:
             href = link.get_attribute("href") or None
@@ -445,7 +527,9 @@ class JobParserAgent:
         name = slug or link_text
         return name, normalized_url
 
-    def _normalize_company_url(self, url: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
+    def _normalize_company_url(
+        self, url: Optional[str]
+    ) -> Tuple[Optional[str], Optional[str]]:
         if not url:
             return None, None
 
@@ -503,33 +587,73 @@ class JobParserAgent:
             return deduped[0]
         return " ".join(deduped)
 
-    def _scroll_results_to_bottom(self, page: Page) -> None:
-        container_selectors = [
+    def _ensure_job_cards_loaded(self, page: Page, collected_so_far: int) -> int:
+        target = max(1, min(self.config.page_size, self.max_jobs - collected_so_far))
+        max_attempts = 20
+        last_count = -1
+
+        for attempt in range(max_attempts):
+            locator = self._locate_job_cards(page)
+            count = locator.count()
+            if count >= target or count >= self.config.page_size:
+                return count
+
+            if count == last_count and attempt > 0:
+                LOGGER.debug(
+                    "Job card count stalled at %d; performing extra scroll.", count
+                )
+
+            self._scroll_results_step(page, attempt)
+            page.wait_for_timeout(1000)
+            last_count = count
+
+        locator = self._locate_job_cards(page)
+        return locator.count()
+
+    def _scroll_results_step(self, page: Page, attempt: int) -> None:
+        step_multiplier = 1 + (attempt * 0.4)
+        selectors = [
             ".jobs-search-two-pane__results-list",
             ".jobs-search__results-list",
             ".jobs-search-results-list",
             ".scaffold-layout__list-container",
         ]
         scrolled = False
-        for selector in container_selectors:
+        for selector in selectors:
             locator = page.locator(selector)
             if locator.count() == 0:
                 continue
             try:
-                locator.evaluate("(el) => el.scrollTo(0, el.scrollHeight)")
+                locator.evaluate(
+                    "(element, step) => { element.scrollTop = element.scrollHeight; element.scrollBy({ top: element.clientHeight * step, behavior: 'instant' }); }",
+                    step_multiplier,
+                )
                 scrolled = True
-                page.wait_for_timeout(300)
             except (PlaywrightTimeoutError, PlaywrightError):
                 continue
         if not scrolled:
             try:
-                page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                page.wait_for_timeout(300)
+                page.evaluate(
+                    "(step) => window.scrollBy({ top: window.innerHeight * step, behavior: 'instant' });",
+                    step_multiplier,
+                )
+                scrolled = True
             except (PlaywrightTimeoutError, PlaywrightError):
-                LOGGER.debug("Unable to perform fallback window scroll.")
+                LOGGER.debug("Unable to perform window scroll step.")
+        if not scrolled:
+            try:
+                page.mouse.wheel(0, 800 * step_multiplier)
+            except (PlaywrightTimeoutError, PlaywrightError):
+                LOGGER.debug("Mouse wheel scroll failed to execute.")
+        else:
+            try:
+                page.keyboard.press("End")
+            except (PlaywrightTimeoutError, PlaywrightError):
+                LOGGER.debug("Keyboard End press failed during scroll.")
 
     def _wait_between_jobs(self, page: Page) -> None:
-        delay_ms = int(max(self.config.page_delay_seconds, 0) * 1000)
+        per_job_delay = min(self.config.page_delay_seconds / 2, 1.5)
+        delay_ms = int(max(per_job_delay, 0) * 1000)
         if delay_ms > 0:
             page.wait_for_timeout(delay_ms)
 
@@ -563,7 +687,9 @@ class JobParserAgent:
         )
         return urlunparse(new_parts)
 
-    def _extract_text(self, locator: Locator, selectors: Iterable[str]) -> Optional[str]:
+    def _extract_text(
+        self, locator: Locator, selectors: Iterable[str]
+    ) -> Optional[str]:
         for selector in selectors:
             try:
                 element = locator.locator(selector).first
@@ -593,7 +719,8 @@ class JobParserAgent:
                 """
             )
             columns = {
-                row[1] for row in conn.execute("PRAGMA table_info(job_postings)").fetchall()
+                row[1]
+                for row in conn.execute("PRAGMA table_info(job_postings)").fetchall()
             }
             if "company_url" not in columns:
                 conn.execute("ALTER TABLE job_postings ADD COLUMN company_url TEXT")
@@ -616,7 +743,9 @@ class JobParserAgent:
                     """
                 )
             except sqlite3.IntegrityError:
-                LOGGER.warning("Duplicate job_id values detected; unique index not created.")
+                LOGGER.warning(
+                    "Duplicate job_id values detected; unique index not created."
+                )
             conn.commit()
 
     def _persist_job(self, job: JobPosting) -> Tuple[bool, int]:
@@ -630,7 +759,9 @@ class JobParserAgent:
                 params,
             )
             conn.commit()
-            total_count = conn.execute("SELECT COUNT(*) FROM job_postings").fetchone()[0]
+            total_count = conn.execute("SELECT COUNT(*) FROM job_postings").fetchone()[
+                0
+            ]
         return cursor.rowcount > 0, total_count
 
     @staticmethod
@@ -688,7 +819,9 @@ class JobParserAgent:
         try:
             self._initial_offset = int(offset_value or 0)
         except ValueError:
-            LOGGER.debug("Unable to parse start offset '%s'; defaulting to 0.", offset_value)
+            LOGGER.debug(
+                "Unable to parse start offset '%s'; defaulting to 0.", offset_value
+            )
             self._initial_offset = 0
         if "keywords" not in self._base_query or not self._base_query["keywords"]:
             self._base_query["keywords"] = self.job_title
@@ -698,7 +831,9 @@ class JobParserAgent:
 
 
 def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Scrape LinkedIn job listings with Playwright.")
+    parser = argparse.ArgumentParser(
+        description="Scrape LinkedIn job listings with Playwright."
+    )
     parser.add_argument(
         "--job-title",
         dest="job_title",
@@ -707,8 +842,12 @@ def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument("--username", help="LinkedIn username (email).")
     parser.add_argument("--password", help="LinkedIn password.")
-    parser.add_argument("--headless", action="store_true", help="Run browser in headless mode.")
-    parser.add_argument("--max-jobs", type=int, help="Upper bound on number of jobs to scrape.")
+    parser.add_argument(
+        "--headless", action="store_true", help="Run browser in headless mode."
+    )
+    parser.add_argument(
+        "--max-jobs", type=int, help="Upper bound on number of jobs to scrape."
+    )
     parser.add_argument(
         "--login-file",
         default="secure/login.txt",
@@ -728,11 +867,15 @@ def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 
 
 def main(argv: Optional[List[str]] = None) -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
+    )
     args = _parse_args(argv)
 
     if args.chromedriver:
-        LOGGER.debug("Chromedriver argument ignored: Playwright no longer relies on Selenium.")
+        LOGGER.debug(
+            "Chromedriver argument ignored: Playwright no longer relies on Selenium."
+        )
 
     credentials = load_credentials(
         args.username,
