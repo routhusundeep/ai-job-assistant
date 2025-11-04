@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Tuple
 
-from playwright.sync_api import Page
+from playwright.sync_api import Browser, BrowserContext, Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 
@@ -43,17 +43,58 @@ def _read_login_file(login_file: Path) -> Tuple[Optional[str], Optional[str]]:
 
 
 LOGIN_URL = "https://www.linkedin.com/login"
+FEED_URL = "https://www.linkedin.com/feed/"
+DEFAULT_LOGIN_FILE = Path("secure/login.txt")
+DEFAULT_SESSION_FILE = Path("secure/session.json")
 LOGGER = logging.getLogger(__name__)
 
 
 def login_to_linkedin(
+    browser: Browser,
+    *,
+    wait_timeout: float,
+    login_file: Path = DEFAULT_LOGIN_FILE,
+    storage_path: Path = DEFAULT_SESSION_FILE,
+) -> tuple[BrowserContext, Page]:
+    """Return an authenticated Playwright context/page, reusing cached storage when possible."""
+
+    storage_kwargs = {}
+    if storage_path.exists():
+        storage_kwargs["storage_state"] = storage_path.as_posix()
+
+    context = browser.new_context(**storage_kwargs)
+    page = context.new_page()
+
+    if _session_active(page, wait_timeout):
+        LOGGER.info("Reusing cached LinkedIn session from %s.", storage_kwargs.get("storage_state", "memory"))
+        return context, page
+
+    LOGGER.info("LinkedIn session invalid or missing; performing login.")
+    _perform_login(page, wait_timeout=wait_timeout, login_file=login_file)
+    storage_path.parent.mkdir(parents=True, exist_ok=True)
+    context.storage_state(path=storage_path.as_posix())
+    LOGGER.info("Stored LinkedIn session to %s.", storage_path)
+    return context, page
+
+
+def _session_active(page: Page, wait_timeout: float) -> bool:
+    try:
+        page.goto(FEED_URL, wait_until="domcontentloaded", timeout=wait_timeout * 1000)
+        page.wait_for_load_state("domcontentloaded")
+    except PlaywrightTimeoutError:
+        LOGGER.debug("Feed check timed out; assuming login required.")
+
+    if "login" in page.url or page.locator("input#username").count() > 0:
+        return False
+    return True
+
+
+def _perform_login(
     page: Page,
     *,
     wait_timeout: float,
-    login_file: Path = Path("secure/login.txt"),
+    login_file: Path,
 ) -> None:
-    """Authenticate to LinkedIn via Playwright."""
-
     creds = load_credentials(login_file)
 
     page.goto(LOGIN_URL, wait_until="domcontentloaded")

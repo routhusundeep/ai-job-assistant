@@ -137,15 +137,12 @@ class JobParserAgent:
         """Execute the full scraping pipeline."""
         with sync_playwright() as playwright:
             browser = self._start_browser(playwright)
-            context = browser.new_context()
-            page = context.new_page()
+            context, page = login_to_linkedin(
+                browser,
+                wait_timeout=self.wait_timeout,
+                login_file=self.login_file,
+            )
             try:
-                LOGGER.info("Logging into LinkedIn.")
-                login_to_linkedin(
-                    page,
-                    wait_timeout=self.wait_timeout,
-                    login_file=self.login_file,
-                )
                 LOGGER.info("Preparing job search for: %s", self.job_title)
                 self._initialize_job_search(page)
                 LOGGER.info("Collecting job postings for: %s", self.job_title)
