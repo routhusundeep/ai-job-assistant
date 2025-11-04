@@ -28,7 +28,9 @@ def load_credentials(login_file: Path = Path("secure/login.txt")) -> Credentials
 
     username, password = _read_login_file(login_file)
     if not username or not password:
-        raise ValueError(f"Login file {login_file} must contain username and password on separate lines.")
+        raise ValueError(
+            f"Login file {login_file} must contain username and password on separate lines."
+        )
 
     return Credentials(username=username, password=password)
 
@@ -66,7 +68,10 @@ def login_to_linkedin(
     page = context.new_page()
 
     if _session_active(page, wait_timeout):
-        LOGGER.info("Reusing cached LinkedIn session from %s.", storage_kwargs.get("storage_state", "memory"))
+        LOGGER.info(
+            "Reusing cached LinkedIn session from %s.",
+            storage_kwargs.get("storage_state", "memory"),
+        )
         return context, page
 
     LOGGER.info("LinkedIn session invalid or missing; performing login.")
@@ -104,14 +109,20 @@ def _perform_login(
         with page.expect_navigation(wait_until="domcontentloaded", timeout=wait_timeout * 1000):
             page.click("button[type='submit']")
     except PlaywrightTimeoutError:
-        LOGGER.debug("Navigation did not complete during login submit; continuing with current page.")
+        LOGGER.debug(
+            "Navigation did not complete during login submit; continuing with current page."
+        )
 
     try:
-        page.wait_for_url(re.compile(r"linkedin\\.com/(feed|jobs|search)"), timeout=wait_timeout * 1000)
+        page.wait_for_url(
+            re.compile(r"linkedin\\.com/(feed|jobs|search)"), timeout=wait_timeout * 1000
+        )
     except PlaywrightTimeoutError:
         LOGGER.debug("Login redirect did not reach feed/search within timeout.")
 
     page.wait_for_load_state("domcontentloaded")
 
     if "login" in page.url:
-        LOGGER.warning("Still on login page after attempting to authenticate. Check credentials or MFA status.")
+        LOGGER.warning(
+            "Still on login page after attempting to authenticate. Check credentials or MFA status."
+        )

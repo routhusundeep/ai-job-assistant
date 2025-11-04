@@ -91,20 +91,6 @@ class ScrapingConfig:
 class JobParserAgent:
     """Scrapes LinkedIn job postings and stores them in SQLite."""
 
-    TITLE_SELECTORS: Iterable[str] = ("a.job-card-container__link strong",)
-    COMPANY_SELECTORS: Iterable[str] = (
-        "a.job-card-container__company-name",
-        "span.job-card-container__primary-description",
-        "a.base-card__subtitle",
-    )
-    COMPANY_LINK_SELECTORS: Tuple[str, ...] = (
-        "a[href*='linkedin.com/company/']",
-        "a[href*='/company/']",
-        "a[data-tracking-control-name*='company']",
-        ".jobs-unified-top-card__primary-description a[href*='linkedin.com/company/']",
-    )
-    JOB_CARD_LIST_SELECTORS: Iterable[str] = ("[data-occludable-job-id]",)
-
     def __init__(
         self,
         job_title: str,
@@ -160,7 +146,9 @@ class JobParserAgent:
     def _initialize_job_search(self, page: Page) -> None:
         search_url = self._build_search_url(self._initial_offset)
         LOGGER.info("Navigating to LinkedIn job search: %s", search_url)
-        page.goto(search_url, wait_until="domcontentloaded", timeout=self.wait_timeout * 1000)
+        page.goto(
+            search_url, wait_until="domcontentloaded", timeout=self.wait_timeout * 1000
+        )
         page.wait_for_load_state("domcontentloaded")
         time.sleep(self.config.page_delay_seconds)
         LOGGER.info("Arrived at job search page: %s", page.url)
@@ -266,7 +254,10 @@ class JobParserAgent:
             recruiter_log = posting.recruiter_url or "(no recruiter)"
             salary_log = "-"
             if posting.salary_min is not None:
-                if posting.salary_max is not None and posting.salary_max != posting.salary_min:
+                if (
+                    posting.salary_max is not None
+                    and posting.salary_max != posting.salary_min
+                ):
                     salary_log = f"{int(posting.salary_min)}-{int(posting.salary_max)}"
                 else:
                     salary_log = f"{int(posting.salary_min)}"
@@ -292,14 +283,19 @@ class JobParserAgent:
             self._wait_between_jobs(page)
 
         if scraped < expected_on_page and len(collected) < self.max_jobs:
-            message = f"Only captured {scraped} jobs from current page (expected {expected_on_page})."
+            message = (
+                f"Only captured {scraped} jobs from current page"
+                + f"(expected {expected_on_page})."
+            )
             LOGGER.error(message)
             raise RuntimeError(message)
 
         return scraped
 
     def _locate_job_cards(self, page: Page) -> Locator:
-        selectors = self.config.selectors.get("job_cards") or ["[data-occludable-job-id]"]
+        selectors = self.config.selectors.get("job_cards") or [
+            "[data-occludable-job-id]"
+        ]
         for selector in selectors:
             locator = page.locator(selector)
             if locator.count() > 0:
@@ -336,11 +332,17 @@ class JobParserAgent:
 
         detail_panel = page.locator("#job-details").first
 
-        raw_title = self._extract_text(card, self.config.selectors.get("title", [])) or "Unknown Title"
+        raw_title = (
+            self._extract_text(card, self.config.selectors.get("title", []))
+            or "Unknown Title"
+        )
         title = self._clean_title(raw_title)
         company_name, company_url = self._resolve_company_info(page, card, detail_panel)
         if company_name is None:
-            company_name = self._extract_text(card, self.config.selectors.get("company", [])) or "Unknown Company"
+            company_name = (
+                self._extract_text(card, self.config.selectors.get("company", []))
+                or "Unknown Company"
+            )
 
         try:
             description = detail_panel.inner_text().strip()
@@ -363,7 +365,9 @@ class JobParserAgent:
             url=f"https://www.linkedin.com/jobs/view/{job_id}/",
         )
 
-    def _extract_salary_range(self, page: Page) -> Tuple[Optional[float], Optional[float]]:
+    def _extract_salary_range(
+        self, page: Page
+    ) -> Tuple[Optional[float], Optional[float]]:
         selector = (
             ".job-details-fit-level-preferences > "
             "button:nth-child(1) > span:nth-child(1) > strong:nth-child(1)"
@@ -394,9 +398,7 @@ class JobParserAgent:
             return number
 
         min_value = to_number(*matches[0])
-        max_value = (
-            to_number(*matches[1]) if len(matches) > 1 else min_value
-        )
+        max_value = to_number(*matches[1]) if len(matches) > 1 else min_value
         return min_value, max_value
 
     def _extract_recruiter_url(self, page: Page) -> Optional[str]:
@@ -692,7 +694,8 @@ def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         "--posted-time",
         dest="posted_time",
         default="",
-        help="LinkedIn posted time filter value for f_TPR (e.g., r86400). Empty string means any time.",
+        help="LinkedIn posted time filter value for f_TPR (e.g., r86400)."
+        + " Empty string means any time.",
     )
     return parser.parse_args(argv)
 
