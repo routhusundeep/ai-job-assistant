@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, List, Tuple
 
 DDL = """
 CREATE TABLE IF NOT EXISTS job_postings (
@@ -25,6 +25,13 @@ CREATE TABLE IF NOT EXISTS job_postings (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_job_postings_job_id
     ON job_postings(job_id)
     WHERE job_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS scores (
+    job_id TEXT PRIMARY KEY,
+    score REAL,
+    llm_refined_score REAL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 
@@ -73,3 +80,37 @@ def insert_job(database_path: Path, job: Mapping[str, Any]) -> bool:
 def insert_job_dataclass(database_path: Path, job) -> bool:
     """Helper that accepts a dataclass instance."""
     return insert_job(database_path, asdict(job))
+
+
+def upsert_score(
+    database_path: Path, job_id: str, score: float, llm_refined_score: float | None
+) -> None:
+    """Insert or update a job similarity score."""
+    with sqlite3.connect(database_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO scores (job_id, score, llm_refined_score)
+            VALUES (?, ?, ?)
+            ON CONFLICT(job_id) DO UPDATE SET
+                score=excluded.score,
+                llm_refined_score=excluded.llm_refined_score,
+                updated_at=CURRENT_TIMESTAMP
+            """,
+            (job_id, score, llm_refined_score),
+        )
+        conn.commit()
+
+
+def fetch_job_descriptions(database_path: Path) -> List[Tuple[str, str]]:
+    """Return (job_id, description) rows from job_postings."""
+    with sqlite3.connect(database_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT job_id, description
+            FROM job_postings
+            WHERE description IS NOT NULL
+            AND TRIM(description) != ''
+            """
+        ).fetchall()
+
+    return [(row[0], row[1]) for row in rows if row[0]]
