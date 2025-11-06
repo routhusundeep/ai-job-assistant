@@ -55,6 +55,7 @@ def _refine_with_ollama(
     prompt = _build_prompt(jobs)
     model_id = model_name or "phi3"
 
+    LOGGER.debug("Ollama refinement request (%s): %s", model_id, prompt)
     messages = [
         {
             "role": "system",
@@ -73,6 +74,7 @@ def _refine_with_ollama(
         LOGGER.error("Ollama refinement failed: %s", exc)
         return {}
 
+    LOGGER.debug("Ollama refinement response: %s", text)
     return _parse_refined_scores(text)
 
 

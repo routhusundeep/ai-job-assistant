@@ -649,9 +649,15 @@ class JobParserAgent:
                 self._base_query.setdefault(key, value)
 
 
-def _configure_logging(verbose: bool) -> None:
+def _configure_logging(log_level: Optional[str]) -> None:
     """Configure module logging."""
-    level = logging.DEBUG if verbose else logging.INFO
+    level = logging.INFO
+    if log_level:
+        parsed_level = getattr(logging, log_level.upper(), None)
+        if not isinstance(parsed_level, int):
+            raise typer.BadParameter(f"Invalid log level: {log_level}")
+        level = parsed_level
+
     logging.basicConfig(
         level=level,
         format="%(asctime)s %(levelname)s %(name)s - %(message)s",
@@ -715,15 +721,14 @@ def run_cli(
         help="Run the browser in headless mode.",
         is_flag=True,
     ),
-    verbose: bool = typer.Option(
-        False,
-        "--verbose",
-        help="Enable debug logging.",
-        is_flag=True,
+    log_level: Optional[str] = typer.Option(
+        None,
+        "--log-level",
+        help="Explicit logging level (e.g. INFO, DEBUG, WARNING). Overrides --verbose.",
     ),
 ) -> None:
     """Run the LinkedIn scraping workflow."""
-    _configure_logging(verbose)
+    _configure_logging(log_level)
 
     scraping_config = ScrapingConfig.load(scrape_config)
 

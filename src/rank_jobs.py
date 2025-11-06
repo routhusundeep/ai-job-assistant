@@ -48,9 +48,14 @@ class JobDescription:
     description: str
 
 
-def _configure_logging(verbose: bool) -> None:
+def _configure_logging(log_level: Optional[str]) -> None:
     """Initialize logging."""
-    level = logging.DEBUG if verbose else logging.INFO
+    level = logging.INFO
+    if log_level:
+        parsed_level = getattr(logging, log_level.upper(), None)
+        if not isinstance(parsed_level, int):
+            raise typer.BadParameter(f"Invalid log level: {log_level}")
+        level = parsed_level
     logging.basicConfig(
         level=level,
         format="%(asctime)s %(levelname)s %(name)s - %(message)s",
@@ -202,10 +207,14 @@ def main(
         None, help="Override remote LLM model id when --use-llm is set."
     ),
     llm_top_n: int = typer.Option(5, help="Number of top jobs to send to the LLM."),
-    verbose: bool = typer.Option(False, help="Enable debug logging.", is_flag=True),
+    log_level: Optional[str] = typer.Option(
+        None,
+        "--log-level",
+        help="Explicit logging level (e.g. INFO, DEBUG, WARNING). Overrides --verbose.",
+    ),
 ):
     """Rank job descriptions against the resume and persist scores."""
-    _configure_logging(verbose)
+    _configure_logging(log_level)
 
     ensure_schema(db_path)
 
