@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import argparse
 import logging
 import re
 import sys
@@ -12,6 +11,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 from urllib.parse import ParseResult, parse_qsl, urlencode, urlparse, urlunparse
 
+import typer
 import yaml
 from playwright.sync_api import Browser
 from playwright.sync_api import Error as PlaywrightError
@@ -23,7 +23,8 @@ from .login import login_to_linkedin
 from .sql import ensure_schema, insert_job_dataclass
 
 LOGGER = logging.getLogger(__name__)
-LOGIN_URL = "https://www.linkedin.com/login"
+
+app = typer.Typer(help="Scrape LinkedIn job postings and persist them to SQLite.")
 
 
 @dataclass
@@ -648,78 +649,111 @@ class JobParserAgent:
                 self._base_query.setdefault(key, value)
 
 
-def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Scrape LinkedIn job listings with Playwright."
-    )
-    parser.add_argument(
-        "--job-title",
-        dest="job_title",
-        required=True,
-        help="Job title or keywords to search for.",
-    )
-    parser.add_argument(
-        "--headless", action="store_true", help="Run browser in headless mode."
-    )
-    parser.add_argument(
-        "--max-jobs",
-        dest="max_jobs",
-        type=int,
-        required=True,
-        help="Total number of jobs to scrape before stopping.",
-    )
-    parser.add_argument(
-        "--login-file",
-        default="secure/login.txt",
-        help="Path to login file with username/password (default: secure/login.txt).",
-    )
-    parser.add_argument(
-        "--scrape-config",
-        default="config/scraping.yaml",
-        help="Path to YAML file containing scraping properties (default: config/scraping.yaml).",
-    )
-    parser.add_argument(
-        "--salary-band",
-        dest="salary_band",
-        type=int,
-        default=9,
-        help="LinkedIn salary band filter value for f_SB2 (1-9, default 9).",
-    )
-    parser.add_argument(
-        "--posted-time",
-        dest="posted_time",
-        default="",
-        help="LinkedIn posted time filter value for f_TPR (e.g., r86400)."
-        + " Empty string means any time.",
-    )
-    return parser.parse_args(argv)
-
-
-def main(argv: Optional[List[str]] = None) -> None:
+def _configure_logging(verbose: bool) -> None:
+    """Configure module logging."""
+    level = logging.DEBUG if verbose else logging.INFO
     logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
+        level=level,
+        format="%(asctime)s %(levelname)s %(name)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
     )
-    args = _parse_args(argv)
 
-    scraping_config = ScrapingConfig.load(Path(args.scrape_config))
+
+@app.callback(invoke_without_command=True)
+def run_cli(
+    *,
+    job_title: str = typer.Option(
+        ...,
+        "--job-title",
+        "-j",
+        help="Job title or keywords to search for.",
+    ),
+    max_jobs: int = typer.Option(
+        ...,
+        "--max-jobs",
+        "-m",
+        min=1,
+        help="Total number of jobs to scrape before stopping.",
+    ),
+    scrape_config: Path = typer.Option(
+        Path("config/scraping.yaml"),
+        "--scrape-config",
+        help="Path to the scraping YAML configuration.",
+    ),
+    login_file: Path = typer.Option(
+        Path("secure/login.txt"),
+        "--login-file",
+        help="Path to the LinkedIn login credential file.",
+    ),
+    db_path: Path = typer.Option(
+        Path("data/jobs.db"),
+        "--db-path",
+        help="Path to the SQLite database file.",
+    ),
+    salary_band: int = typer.Option(
+        9,
+        "--salary-band",
+        min=1,
+        max=9,
+        help="LinkedIn salary band filter value for f_SB2 (1-9).",
+    ),
+    posted_time: str = typer.Option(
+        "",
+        "--posted-time",
+        help="LinkedIn posted time filter for f_TPR (e.g., r86400). "
+        "Empty string keeps LinkedIn defaults.",
+    ),
+    wait_timeout: float = typer.Option(
+        20.0,
+        "--wait-timeout",
+        min=1.0,
+        help="Timeout in seconds for Playwright waits.",
+    ),
+    headless: bool = typer.Option(
+        False,
+        "--headless",
+        help="Run the browser in headless mode.",
+        is_flag=True,
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        help="Enable debug logging.",
+        is_flag=True,
+    ),
+) -> None:
+    """Run the LinkedIn scraping workflow."""
+    _configure_logging(verbose)
+
+    scraping_config = ScrapingConfig.load(scrape_config)
 
     agent = JobParserAgent(
-        job_title=args.job_title,
+        job_title=job_title,
         scraping_config=scraping_config,
-        max_jobs=args.max_jobs,
-        headless=args.headless,
-        salary_band=args.salary_band,
-        posted_time=args.posted_time,
-        login_file=Path(args.login_file),
+        max_jobs=max_jobs,
+        headless=headless,
+        salary_band=salary_band,
+        posted_time=posted_time,
+        login_file=login_file,
+        database_path=db_path,
+        wait_timeout=wait_timeout,
     )
 
     jobs = agent.run()
     LOGGER.info("Scraped %d jobs.", len(jobs))
 
 
-if __name__ == "__main__":
+def main(argv: Optional[List[str]] = None) -> None:
+    """Entry point for backward compatibility."""
     try:
-        main()
+        if argv is None:
+            app()
+        else:
+            app(args=list(argv))
     except KeyboardInterrupt:
         LOGGER.info("Job scraping interrupted by user.")
         sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
