@@ -41,12 +41,50 @@ def _build_prompt(jobs: Iterable[RankedJob]) -> str:
     )
 
 
-def _refine_with_gemini(jobs: List[RankedJob], model_name: Optional[str]) -> Dict[str, float]:
+def _refine_with_ollama(
+    jobs: List[RankedJob], model_name: Optional[str]
+) -> Dict[str, float]:
+    """Use a local Ollama model to refine ranking."""
+    try:
+        import ollama  # type: ignore
+    except ImportError:
+        LOGGER.warning("ollama package not installed; skipping local rerank.")
+        return {}
+
+    prompt = _build_prompt(jobs)
+    model_id = model_name or "phi3"
+
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You re-rank job descriptions based on how well they match the resume. "
+                "Respond with a JSON array containing objects with job_id and refined_score (0-1)."
+            ),
+        },
+        {"role": "user", "content": prompt},
+    ]
+
+    try:
+        response = ollama.chat(model=model_id, messages=messages)  # type: ignore[arg-type]
+        text = response.get("message", {}).get("content", "")
+    except Exception as exc:  # pylint: disable=broad-except
+        LOGGER.error("Ollama refinement failed: %s", exc)
+        return {}
+
+    return _parse_refined_scores(text)
+
+
+def _refine_with_gemini(
+    jobs: List[RankedJob], model_name: Optional[str]
+) -> Dict[str, float]:
     """Use Gemini to refine ranking, returning job_id to refined score."""
     try:
         import google.generativeai as genai  # type: ignore
     except ImportError:
-        LOGGER.warning("google-generativeai package not installed; skipping Gemini refinement.")
+        LOGGER.warning(
+            "google-generativeai package not installed; skipping Gemini refinement."
+        )
         return {}
 
     api_key = os.environ.get("GOOGLE_API_KEY")
@@ -69,7 +107,9 @@ def _refine_with_gemini(jobs: List[RankedJob], model_name: Optional[str]) -> Dic
     return _parse_refined_scores(text)
 
 
-def _refine_with_openai(jobs: List[RankedJob], model_name: Optional[str]) -> Dict[str, float]:
+def _refine_with_openai(
+    jobs: List[RankedJob], model_name: Optional[str]
+) -> Dict[str, float]:
     """Use the OpenAI client to refine the ranking."""
     try:
         from openai import OpenAI  # type: ignore
@@ -87,7 +127,9 @@ def _refine_with_openai(jobs: List[RankedJob], model_name: Optional[str]) -> Dic
     model_id = model_name or "gpt-4.1-mini"
 
     try:
-        response = client.responses.create(model=model_id, input=prompt, temperature=0.1)
+        response = client.responses.create(
+            model=model_id, input=prompt, temperature=0.1
+        )
         text = response.output_text or ""
     except Exception as exc:  # pylint: disable=broad-except
         LOGGER.error("OpenAI refinement failed: %s", exc)
@@ -117,7 +159,9 @@ def _parse_refined_scores(response_text: str) -> Dict[str, float]:
         try:
             refined[job_id] = float(score)
         except (TypeError, ValueError):
-            LOGGER.debug("Skipping invalid refined score for job_id %s: %s", job_id, score)
+            LOGGER.debug(
+                "Skipping invalid refined score for job_id %s: %s", job_id, score
+            )
             continue
     return refined
 
@@ -137,14 +181,18 @@ def refine_scores(
     Returns:
         Mapping of job_id to refined score. Empty if refinement skipped.
     """
+
     if not jobs:
         return {}
 
     normalized_provider = (provider or "").lower()
 
-    if normalized_provider not in {"gemini", "openai", ""}:
+    if normalized_provider not in {"gemini", "openai", "ollama", ""}:
         LOGGER.warning("Unknown LLM provider %s; skipping refinement.", provider)
         return {}
+
+    if normalized_provider == "ollama":
+        return _refine_with_ollama(jobs, model_name)
 
     if normalized_provider == "gemini":
         return _refine_with_gemini(jobs, model_name)
@@ -153,6 +201,10 @@ def refine_scores(
         return _refine_with_openai(jobs, model_name)
 
     # Auto-detect provider preference.
+    local_result = _refine_with_ollama(jobs, model_name)
+    if local_result:
+        return local_result
+
     if os.environ.get("GOOGLE_API_KEY"):
         return _refine_with_gemini(jobs, model_name)
     if os.environ.get("OPENAI_API_KEY"):

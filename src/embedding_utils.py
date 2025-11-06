@@ -8,6 +8,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Iterable
 
+import faiss
 import numpy as np
 from pylatexenc.latex2text import LatexNodes2Text
 from sentence_transformers import SentenceTransformer
@@ -44,12 +45,33 @@ def load_embedding_model(model_name: str) -> SentenceTransformer:
     return SentenceTransformer(model_name)
 
 
-def embed_texts(model: SentenceTransformer, texts: Iterable[str]) -> np.ndarray:
+def _should_use_e5_formatting(model_name: str) -> bool:
+    return "e5" in model_name.lower()
+
+
+def _format_for_e5(texts: Iterable[str], is_query: bool) -> list[str]:
+    prefix = "query: " if is_query else "passage: "
+    return [f"{prefix}{text.strip()}" for text in texts]
+
+
+def embed_texts(
+    model: SentenceTransformer,
+    texts: Iterable[str],
+    *,
+    model_name: str,
+    is_query: bool = False,
+) -> np.ndarray:
     """Embed one or more texts with the provided model."""
+    prepared_texts = list(texts)
+    if _should_use_e5_formatting(model_name):
+        prepared_texts = _format_for_e5(prepared_texts, is_query=is_query)
+
     embeddings = model.encode(
-        list(texts), convert_to_numpy=True, normalize_embeddings=True
+        prepared_texts,
+        convert_to_numpy=True,
+        normalize_embeddings=True,
     )
-    return embeddings
+    return np.asarray(embeddings, dtype=np.float32)
 
 
 def cosine_similarity_scores(
@@ -59,3 +81,34 @@ def cosine_similarity_scores(
     query = np.atleast_2d(query_embedding)
     similarities = cosine_similarity(query, document_embeddings)
     return similarities[0]
+
+
+def embedding_to_bytes(embedding: np.ndarray) -> bytes:
+    """Serialize an embedding to bytes."""
+    return np.asarray(embedding, dtype=np.float32).tobytes()
+
+
+def bytes_to_embedding(data: bytes) -> np.ndarray:
+    """Deserialize bytes into a float32 embedding."""
+    return np.frombuffer(data, dtype=np.float32).copy()
+
+
+def build_faiss_index(embeddings: np.ndarray) -> faiss.IndexFlatIP:
+    """Create a FAISS index from normalized embeddings."""
+    if embeddings.dtype != np.float32:
+        embeddings = embeddings.astype(np.float32)
+    index = faiss.IndexFlatIP(embeddings.shape[1])
+    index.add(embeddings)
+    return index
+
+
+def faiss_search(
+    index: faiss.IndexFlatIP, query_embedding: np.ndarray, k: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """Run a FAISS search for the provided query embedding."""
+    if query_embedding.dtype != np.float32:
+        query_embedding = query_embedding.astype(np.float32)
+    distances, indices = index.search(
+        np.asarray([query_embedding], dtype=np.float32), k
+    )
+    return distances[0], indices[0]

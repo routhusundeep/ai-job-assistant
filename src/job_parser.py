@@ -743,17 +743,9 @@ def run_cli(
     LOGGER.info("Scraped %d jobs.", len(jobs))
 
 
-def main(argv: Optional[List[str]] = None) -> None:
-    """Entry point for backward compatibility."""
+if __name__ == "__main__":
     try:
-        if argv is None:
-            app()
-        else:
-            app(args=list(argv))
+        app()
     except KeyboardInterrupt:
         LOGGER.info("Job scraping interrupted by user.")
         sys.exit(1)
-
-
-if __name__ == "__main__":
-    main()

@@ -8,22 +8,34 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
+import numpy as np
 import pandas as pd
 import typer
 
 from .embedding_utils import (
-    cosine_similarity_scores,
+    build_faiss_index,
+    bytes_to_embedding,
     embed_texts,
+    embedding_to_bytes,
+    faiss_search,
     load_embedding_model,
     load_resume_text,
 )
 from .llm_refiner import RankedJob, refine_scores
-from .sql import ensure_schema, fetch_job_descriptions, upsert_score
+from .sql import (
+    ensure_schema,
+    fetch_job_descriptions,
+    fetch_job_embeddings,
+    fetch_resume_embedding,
+    upsert_job_embedding,
+    upsert_resume_embedding,
+    upsert_score,
+)
 
 LOGGER = logging.getLogger(__name__)
 DEFAULT_RESUME_PATH = Path("config/resume.tex")
 DEFAULT_DB_PATH = Path("data/jobs.db")
-DEFAULT_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+DEFAULT_MODEL = "intfloat/e5-base-v2"
 
 app = typer.Typer(help="Rank stored job descriptions against the resume.")
 
@@ -59,6 +71,76 @@ def _load_jobs_from_db(db_path: Path) -> List[JobDescription]:
             "Run the scraper to ingest posts before ranking."
         )
     return jobs
+
+
+def _load_job_embeddings(
+    db_path: Path,
+    model,
+    model_name: str,
+    jobs: Sequence[JobDescription],
+) -> np.ndarray:
+    """Retrieve or compute embeddings for all jobs."""
+    job_ids = [job.job_id for job in jobs]
+    cached = fetch_job_embeddings(db_path, job_ids, model_name)
+
+    embedding_map: Dict[str, np.ndarray] = {}
+    missing_jobs: List[JobDescription] = []
+    missing_texts: List[str] = []
+
+    for job in jobs:
+        blob = cached.get(job.job_id)
+        if blob:
+            embedding_map[job.job_id] = bytes_to_embedding(blob)
+        else:
+            missing_jobs.append(job)
+            missing_texts.append(job.description)
+
+    if missing_jobs:
+        LOGGER.info("Embedding %d new job descriptions.", len(missing_jobs))
+        new_embeddings = embed_texts(
+            model,
+            missing_texts,
+            model_name=model_name,
+            is_query=False,
+        )
+        for job, embedding in zip(missing_jobs, new_embeddings):
+            embedding_map[job.job_id] = embedding
+            upsert_job_embedding(
+                db_path, job.job_id, model_name, embedding_to_bytes(embedding)
+            )
+
+    try:
+        matrix = np.vstack([embedding_map[job.job_id] for job in jobs])
+    except KeyError as exc:
+        missing = exc.args[0]
+        raise RuntimeError(f"Missing embedding for job_id {missing}") from exc
+
+    return np.asarray(matrix, dtype=np.float32)
+
+
+def _load_resume_embedding(
+    db_path: Path,
+    model,
+    model_name: str,
+    resume_path: Path,
+    resume_text: str,
+) -> np.ndarray:
+    """Retrieve or compute the resume embedding."""
+    cached = fetch_resume_embedding(db_path, resume_path, model_name)
+    if cached:
+        return bytes_to_embedding(cached)
+
+    LOGGER.info("Embedding resume with model %s", model_name)
+    embedding = embed_texts(
+        model,
+        [resume_text],
+        model_name=model_name,
+        is_query=True,
+    )[0]
+    upsert_resume_embedding(
+        db_path, resume_path, model_name, embedding_to_bytes(embedding)
+    )
+    return embedding
 
 
 def _print_top_results(
@@ -109,10 +191,12 @@ def main(
         DEFAULT_MODEL, help="Sentence-transformer model name."
     ),
     use_llm: bool = typer.Option(
-        False, help="Enable Gemini/GPT reranking if configured."
+        False,
+        help="Enable LLM reranking (prefers local Ollama, falls back to Gemini/OpenAI).",
     ),
     llm_provider: Optional[str] = typer.Option(
-        None, help="Override LLM provider when --use-llm is set (gemini|openai)."
+        None,
+        help="Override LLM provider when --use-llm is set (ollama|gemini|openai).",
     ),
     llm_model: Optional[str] = typer.Option(
         None, help="Override remote LLM model id when --use-llm is set."
@@ -134,16 +218,26 @@ def main(
     jobs = _load_jobs_from_db(db_path)
 
     model = load_embedding_model(model_name)
-    LOGGER.info("Embedding resume and %d job descriptions", len(jobs))
-    resume_embedding = embed_texts(model, [resume_text])[0]
-    job_embeddings = embed_texts(model, (job.description for job in jobs))
-
-    similarities = cosine_similarity_scores(resume_embedding, job_embeddings)
-    ranked_jobs: List[tuple[JobDescription, float]] = sorted(
-        zip(jobs, similarities),
-        key=lambda item: item[1],
-        reverse=True,
+    LOGGER.info("Preparing embeddings with model %s", model_name)
+    resume_embedding = _load_resume_embedding(
+        db_path, model, model_name, resume_path, resume_text
     )
+    job_embeddings = _load_job_embeddings(db_path, model, model_name, jobs)
+
+    faiss_index = build_faiss_index(job_embeddings)
+    search_k = len(jobs)
+    _, faiss_indices = faiss_search(faiss_index, resume_embedding, search_k)
+    base_scores = job_embeddings @ np.asarray(resume_embedding, dtype=np.float32)
+    base_scores_map: Dict[str, float] = {
+        job.job_id: float(score) for job, score in zip(jobs, base_scores)
+    }
+
+    ranked_jobs: List[tuple[JobDescription, float]] = []
+    for rank_idx, job_index in enumerate(faiss_indices):
+        if job_index < 0 or job_index >= len(jobs):
+            continue
+        job = jobs[job_index]
+        ranked_jobs.append((job, base_scores_map[job.job_id]))
 
     refined_scores: Dict[str, float] = {}
     if use_llm:
@@ -155,12 +249,18 @@ def main(
         LOGGER.info("LLM returned refined scores for %d jobs.", len(refined_scores))
 
     LOGGER.info("Persisting scores to SQLite at %s", db_path)
-    for job, base_score in ranked_jobs:
+    for job in jobs:
+        base_score = base_scores_map[job.job_id]
         refined_score = refined_scores.get(job.job_id)
         upsert_score(db_path, job.job_id, float(base_score), refined_score)
 
     ranked_with_refined: List[tuple[JobDescription, float, Optional[float]]] = [
-        (job, score, refined_scores.get(job.job_id)) for job, score in ranked_jobs
+        (
+            job,
+            base_scores_map[job.job_id],
+            refined_scores.get(job.job_id),
+        )
+        for job, _ in ranked_jobs
     ]
 
     _print_top_results(ranked_with_refined)

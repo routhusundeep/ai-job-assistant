@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, List, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 DDL = """
 CREATE TABLE IF NOT EXISTS job_postings (
@@ -31,6 +31,22 @@ CREATE TABLE IF NOT EXISTS scores (
     score REAL,
     llm_refined_score REAL,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS job_embeddings (
+    job_id TEXT NOT NULL,
+    model_name TEXT NOT NULL,
+    embedding BLOB NOT NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (job_id, model_name)
+);
+
+CREATE TABLE IF NOT EXISTS resume_embeddings (
+    resume_path TEXT NOT NULL,
+    model_name TEXT NOT NULL,
+    embedding BLOB NOT NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (resume_path, model_name)
 );
 """
 
@@ -114,3 +130,81 @@ def fetch_job_descriptions(database_path: Path) -> List[Tuple[str, str]]:
         ).fetchall()
 
     return [(row[0], row[1]) for row in rows if row[0]]
+
+
+def fetch_job_embeddings(
+    database_path: Path, job_ids: Iterable[str], model_name: str
+) -> Dict[str, bytes]:
+    """Return embeddings for the given job ids keyed by job_id."""
+    job_ids = list(job_ids)
+    if not job_ids:
+        return {}
+
+    placeholders = ",".join("?" for _ in job_ids)
+    params: Tuple[Any, ...] = (model_name, *job_ids)
+
+    with sqlite3.connect(database_path) as conn:
+        rows = conn.execute(
+            f"""
+            SELECT job_id, embedding
+            FROM job_embeddings
+            WHERE model_name = ?
+              AND job_id IN ({placeholders})
+            """,
+            params,
+        ).fetchall()
+
+    return {row[0]: row[1] for row in rows}
+
+
+def upsert_job_embedding(
+    database_path: Path, job_id: str, model_name: str, embedding: bytes
+) -> None:
+    """Store a job embedding for the given model."""
+    with sqlite3.connect(database_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO job_embeddings (job_id, model_name, embedding)
+            VALUES (?, ?, ?)
+            ON CONFLICT(job_id, model_name) DO UPDATE SET
+                embedding=excluded.embedding,
+                updated_at=CURRENT_TIMESTAMP
+            """,
+            (job_id, model_name, sqlite3.Binary(embedding)),
+        )
+        conn.commit()
+
+
+def fetch_resume_embedding(
+    database_path: Path, resume_path: Path, model_name: str
+) -> Optional[bytes]:
+    """Retrieve the stored embedding for the resume if present."""
+    with sqlite3.connect(database_path) as conn:
+        row = conn.execute(
+            """
+            SELECT embedding
+            FROM resume_embeddings
+            WHERE resume_path = ?
+              AND model_name = ?
+            """,
+            (str(resume_path), model_name),
+        ).fetchone()
+    return row[0] if row else None
+
+
+def upsert_resume_embedding(
+    database_path: Path, resume_path: Path, model_name: str, embedding: bytes
+) -> None:
+    """Persist the resume embedding for reuse."""
+    with sqlite3.connect(database_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO resume_embeddings (resume_path, model_name, embedding)
+            VALUES (?, ?, ?)
+            ON CONFLICT(resume_path, model_name) DO UPDATE SET
+                embedding=excluded.embedding,
+                updated_at=CURRENT_TIMESTAMP
+            """,
+            (str(resume_path), model_name, sqlite3.Binary(embedding)),
+        )
+        conn.commit()
