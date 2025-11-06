@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional
 
@@ -148,7 +149,7 @@ def _parse_refined_scores(response_text: str) -> Dict[str, float]:
         payload = json.loads(response_text)
     except json.JSONDecodeError:
         LOGGER.error("Failed to decode LLM refinement payload: %s", response_text)
-        return {}
+        return _parse_relaxed_scores(response_text)
 
     refined: Dict[str, float] = {}
     for entry in payload:
@@ -163,6 +164,49 @@ def _parse_refined_scores(response_text: str) -> Dict[str, float]:
                 "Skipping invalid refined score for job_id %s: %s", job_id, score
             )
             continue
+    return refined
+
+
+def _parse_relaxed_scores(response_text: str) -> Dict[str, float]:
+    """Fallback parser that tolerates loosely formatted JSON-like payloads."""
+    pattern = re.compile(
+        r'"job_id"\s*:\s*"(?P<job_id>[^"]+)"[^}]*?"refined_score"\s*:\s*(?P<score>[^,\}\]]+)',
+        re.IGNORECASE | re.DOTALL,
+    )
+    refined: Dict[str, float] = {}
+
+    for match in pattern.finditer(response_text):
+        job_id = match.group("job_id").strip()
+        score_raw = match.group("score").strip()
+        if not job_id or not score_raw:
+            continue
+
+        normalized = score_raw.strip('"')
+        if normalized.lower() in {"nan", "none"}:
+            LOGGER.debug(
+                "Skipping non-numeric refined score for job_id %s: %s", job_id, score_raw
+            )
+            continue
+
+        if re.fullmatch(r"0+", normalized):
+            normalized = "0"
+        elif re.fullmatch(r"0+[0-9]+(\.[0-9]+)?", normalized):
+            normalized = normalized.lstrip("0")
+            if normalized.startswith("."):
+                normalized = f"0{normalized}"
+
+        try:
+            refined[job_id] = float(normalized)
+        except ValueError:
+            LOGGER.debug(
+                "Skipping refined score that could not be coerced for job_id %s: %s",
+                job_id,
+                score_raw,
+            )
+            continue
+
+    if not refined:
+        LOGGER.warning("Relaxed parsing failed for LLM payload: %s", response_text)
     return refined
 
 
