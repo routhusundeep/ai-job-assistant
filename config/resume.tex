@@ -1,0 +1,81 @@
+\documentclass[a4paper,10pt]{rewrite}
+\pagenumbering{gobble}
+
+% title formats
+\titleformat{\section}
+  {\normalfont\bfseries\large}{}{0pt}
+  {\textcolor{sectioncolor}{#1}}
+\titlespacing*\section{0pt}{5pt}{5pt}
+
+\titleformat{\subsection}
+  {\normalfont\bfseries\small}{}{0pt}
+  {\textcolor{sectioncolor}{#1}}
+\titlespacing*\subsection{0pt}{10pt}{5pt}
+
+\newcommand{\smallbullet}{\,\begin{picture}(-1,1)(-1,-3)\circle*{2}\end{picture}\ }
+\newcommand{\sbt}{\smallbullet\ }
+
+% begin document  
+\begin{document}
+\RaggedRight
+
+% title
+\titlesectionnew{Sundeep Routhu}
+{+1 (857) 492-2030}
+{routhusundeep@gmail.com}
+{linkedin.com/in/sundeep-routhu} 
+{github.com/routhusundeep}
+
+\begin{center}
+\textit{Software Engineer with 8 years building high-scale backend systems and distributed infrastructure serving millions of users.}
+\end{center}
+
+% Work Experience Section
+\section*{Work Experience}
+\subsection*{\workentrynew{Grab}{Senior Software Engineer}{Singapore}{July 2022--July 2024}}
+\begin{itemize}[left=0pt, itemsep=0pt, label=$\bullet$]
+    \item Built end-to-end authentication system from scratch in Go on AWS, including custom OAuth 2.1 implementation, handling \textasciitilde10M peak daily logins across countries and applications (rides, food, payments).
+    \item Reduced login drop-off from 5\% to 2\% by optimizing authentication flows and adopting security best practices, enabling thousands of additional successful logins daily and driving revenue growth.
+    \item Implemented multi-factor authentication from the ground up, supporting push-based MFA and social logins, saving up to \textasciitilde\$200k annually in SMS costs while enhancing security and preventing fraudulent logins.
+    \item Architected family account grouping system as technical point of contact across payments, profile, and product teams, enabling secure sharing of payment methods and rides.
+    \item Deployed Redis Bloom filter to eliminate invalid session lookups, improving P99.99 authentication latency from 1s to 400ms.
+\end{itemize}
+
+\subsection*{\workentrynew{VISA}{Senior Software Engineer}{Singapore}{Jan 2019--Jun 2022}}
+\begin{itemize}[left=0pt, itemsep=0pt, label=$\bullet$]
+    \item Developed cardholder benefits platform for hundreds of banks processing benefit eligibility for 900M cards daily, enabling personalized rewards based on spending patterns.
+    \item Designed configurable rules engine for benefit personalization based on card types, merchant categories, tiered spend thresholds, and cross-border transactions.
+    \item Architected 1TB/day pipeline migration to Hadoop/Spark/Kafka/Hive, leading 3 engineers and 2 QA to cut processing from 4hrs to 20min and save ~\$100k annually in licensing. Implemented staged migration with atomic batching, with data models adopted by 7 downstream services.
+    \item Independently maintained full-stack Java/Spring + TypeScript web app for benefit redemption, serving hundreds of thousands of customers.
+\end{itemize}
+
+\subsection*{\workentrynew{Works Applications}{Software Engineer}{Singapore}{Oct 2016--Dec 2018}}
+\begin{itemize}[left=0pt, itemsep=0pt, label=$\bullet$]
+    \item Created framework generalizing journal entry creation across enterprise applications for hundreds of Japanese companies, supporting diverse expense types (rides, meals, travel, insurance).
+    \item Migrated a monolithic system to event-driven microservices, reducing mean response time from 800ms to 250ms while improving scalability and fault tolerance.
+\end{itemize}
+
+% Projects Section
+\section*{Projects}
+\begin{itemize}[left=0pt, itemsep=0pt, label=$\bullet$]
+    \item \textbf{\textcolor{titlecolor}{In-Context Learning in LLMs:}} Studying how context examples influence autoregressive, seq2seq, and instruction-tuned LLMs, analyzing how input and label distributions impact model accuracy and generalization.
+    \item \textbf{\textcolor{titlecolor}{Consensus Protocols:}} Implemented \href{https://github.com/routhusundeep/paxos}{Multi-Paxos} and \href{https://github.com/routhusundeep/raft}{Raft} in Rust with leader election, log replication, and automatic recovery. Built sharded key-value store in Go using \href{https://github.com/routhusundeep/omnipaxos-go}{Omni-Paxos} for fault-tolerant replication.
+    \item \textbf{\textcolor{titlecolor}{What I Learned:}} Maintaining a \href{https://github.com/routhusundeep/What-I-Learned}{GitHub repository} of notes and interpretations on distributed systems and datastore research papers.
+\end{itemize}
+
+% Skills Section
+\section*{Skills}
+\begin{itemize}[left=0pt, itemsep=0pt, label=\textcolor{titlecolor}{$\bullet$}]
+    \item \textbf{\textcolor{titlecolor}{Languages:}} C/C++, Java, Rust, Go, Haskell, Python, SQL
+    \item \textbf{\textcolor{titlecolor}{Data \& Infrastructure:}} AWS (Lambda, DynamoDB, Kinesis, EC2, ALB, Cognito), Spark, Hadoop, Hive, Kafka, Flink, Redis, Cassandra, HBase, PostgreSQL, MongoDB, ElasticSearch, Jenkins, Terraform, Airflow, Kubernetes
+    \item \textbf{\textcolor{titlecolor}{Tools \& Protocols:}} Prometheus, Grafana, Kong, gRPC, GraphQL, REST
+\end{itemize}
+
+% Education Section
+\section*{Education}
+\begin{itemize}[left=0pt, itemsep=0pt, label=$\bullet$]
+    \item \textbf{B.Tech. in Computer Science}, Indian Institute of Technology Bombay, 2012--2016 (All India Rank: 43)
+    \item \textbf{M.Sc. in Computer Science}, Boston University (expected 2025)
+\end{itemize}
+
+\end{document}
