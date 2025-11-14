@@ -22,7 +22,7 @@ from .embedding_utils import (
     load_resume_text,
 )
 from .llm_refiner import RankedJob, refine_scores
-from .sql import (
+from ..sql import (
     ensure_schema,
     fetch_job_descriptions,
     fetch_job_embeddings,

@@ -20,7 +20,7 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 
 from .login import login_to_linkedin
-from .sql import ensure_schema, insert_job_dataclass
+from ..sql import ensure_schema, insert_job_dataclass
 
 LOGGER = logging.getLogger(__name__)
 

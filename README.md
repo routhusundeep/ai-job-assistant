@@ -21,3 +21,8 @@ The server defaults to `data/jobs.db`. Override by exporting `JOB_ASSISTANT_DB=/
 - `GET /jobs/{job_key}` – Detail view scaffold that surfaces all metadata and will host future Stage 2/3 tooling.
 
 Both pages call the REST API directly, so no additional frontend build tooling is required.
+
+## CLI agents
+
+- Scraper: `python -m src.scrape.job_parser --help`
+- Ranking: `python -m src.ranking.rank_jobs --help`
