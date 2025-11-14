@@ -30,11 +30,13 @@ def _serialize_jobs(jobs: Iterable[RankedJob]) -> str:
     return json.dumps(payload, ensure_ascii=False)
 
 
-def _build_prompt(jobs: Iterable[RankedJob]) -> str:
-    """Construct a consistent instruction for Gemini/GPT models."""
+def _build_prompt(jobs: Iterable[RankedJob], resume_text: str) -> str:
+    """Construct a consistent instruction for reranking models."""
     serialized = _serialize_jobs(jobs)
     return (
         "You are re-ranking job descriptions for resume alignment. "
+        "Resume content for the candidate is provided below:\n"
+        f"{resume_text}\n\n"
         "Given the JSON array of jobs below (each with job_id, score, description) "
         "return a JSON array of objects where each object contains job_id and "
         "refined_score between 0 and 1. Higher is better. Respond with JSON only.\n"
@@ -43,7 +45,7 @@ def _build_prompt(jobs: Iterable[RankedJob]) -> str:
 
 
 def _refine_with_ollama(
-    jobs: List[RankedJob], model_name: Optional[str]
+    jobs: List[RankedJob], resume_text: str, model_name: Optional[str]
 ) -> Dict[str, float]:
     """Use a local Ollama model to refine ranking."""
     try:
@@ -52,7 +54,7 @@ def _refine_with_ollama(
         LOGGER.warning("ollama package not installed; skipping local rerank.")
         return {}
 
-    prompt = _build_prompt(jobs)
+    prompt = _build_prompt(jobs, resume_text)
     model_id = model_name or "phi3"
 
     LOGGER.debug("Ollama refinement request (%s): %s", model_id, prompt)
@@ -79,14 +81,14 @@ def _refine_with_ollama(
 
 
 def _refine_with_gemini(
-    jobs: List[RankedJob], model_name: Optional[str]
+    jobs: List[RankedJob], resume_text: str, model_name: Optional[str]
 ) -> Dict[str, float]:
     """Use Gemini to refine ranking, returning job_id to refined score."""
     try:
-        import google.generativeai as genai  # type: ignore
+        from google import genai  # type: ignore
     except ImportError:
         LOGGER.warning(
-            "google-generativeai package not installed; skipping Gemini refinement."
+            "google-genai package not installed; skipping Gemini refinement."
         )
         return {}
 
@@ -95,14 +97,16 @@ def _refine_with_gemini(
         LOGGER.warning("GOOGLE_API_KEY not set; skipping Gemini refinement.")
         return {}
 
-    genai.configure(api_key=api_key)
-    model_id = model_name or "gemini-1.5-flash"
-    prompt = _build_prompt(jobs)
+    client = genai.Client()
+    model_id = model_name or "gemini-2.5-flash"
+    prompt = _build_prompt(jobs, resume_text)
 
     try:
-        model = genai.GenerativeModel(model_id)
-        response = model.generate_content(prompt)
-        text = response.text or ""
+        response = client.models.generate_content(
+            model=model_id,
+            contents=prompt,
+        )
+        text = getattr(response, "text", None) or ""
     except Exception as exc:  # pylint: disable=broad-except
         LOGGER.error("Gemini refinement failed: %s", exc)
         return {}
@@ -111,7 +115,7 @@ def _refine_with_gemini(
 
 
 def _refine_with_openai(
-    jobs: List[RankedJob], model_name: Optional[str]
+    jobs: List[RankedJob], resume_text: str, model_name: Optional[str]
 ) -> Dict[str, float]:
     """Use the OpenAI client to refine the ranking."""
     try:
@@ -126,7 +130,7 @@ def _refine_with_openai(
         return {}
 
     client = OpenAI(api_key=api_key)
-    prompt = _build_prompt(jobs)
+    prompt = _build_prompt(jobs, resume_text)
     model_id = model_name or "gpt-4.1-mini"
 
     try:
@@ -186,7 +190,9 @@ def _parse_relaxed_scores(response_text: str) -> Dict[str, float]:
         normalized = score_raw.strip('"')
         if normalized.lower() in {"nan", "none"}:
             LOGGER.debug(
-                "Skipping non-numeric refined score for job_id %s: %s", job_id, score_raw
+                "Skipping non-numeric refined score for job_id %s: %s",
+                job_id,
+                score_raw,
             )
             continue
 
@@ -214,6 +220,7 @@ def _parse_relaxed_scores(response_text: str) -> Dict[str, float]:
 
 def refine_scores(
     jobs: List[RankedJob],
+    resume_text: str,
     provider: Optional[str] = None,
     model_name: Optional[str] = None,
 ) -> Dict[str, float]:
@@ -221,6 +228,7 @@ def refine_scores(
 
     Args:
         jobs: Top candidate jobs sorted by similarity.
+        resume_text: Full resume content used to judge alignment.
         provider: Optional explicit provider, e.g. 'gemini' or 'openai'.
         model_name: Optional override for the downstream LLM model id.
 
@@ -238,23 +246,23 @@ def refine_scores(
         return {}
 
     if normalized_provider == "ollama":
-        return _refine_with_ollama(jobs, model_name)
+        return _refine_with_ollama(jobs, resume_text, model_name)
 
     if normalized_provider == "gemini":
-        return _refine_with_gemini(jobs, model_name)
+        return _refine_with_gemini(jobs, resume_text, model_name)
 
     if normalized_provider == "openai":
-        return _refine_with_openai(jobs, model_name)
+        return _refine_with_openai(jobs, resume_text, model_name)
 
     # Auto-detect provider preference.
-    local_result = _refine_with_ollama(jobs, model_name)
+    local_result = _refine_with_ollama(jobs, resume_text, model_name)
     if local_result:
         return local_result
 
     if os.environ.get("GOOGLE_API_KEY"):
-        return _refine_with_gemini(jobs, model_name)
+        return _refine_with_gemini(jobs, resume_text, model_name)
     if os.environ.get("OPENAI_API_KEY"):
-        return _refine_with_openai(jobs, model_name)
+        return _refine_with_openai(jobs, resume_text, model_name)
 
     LOGGER.warning("LLM refinement requested but no provider configured; skipping.")
     return {}

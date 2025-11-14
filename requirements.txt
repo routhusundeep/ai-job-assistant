@@ -10,3 +10,4 @@ typer==0.20.0
 pylatexenc==2.10
 faiss-cpu
 ollama
+google-genai

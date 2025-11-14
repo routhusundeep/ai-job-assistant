@@ -210,7 +210,7 @@ def main(
     log_level: Optional[str] = typer.Option(
         None,
         "--log-level",
-        help="Explicit logging level (e.g. INFO, DEBUG, WARNING). Overrides --verbose.",
+        help="Explicit logging level (e.g. INFO, DEBUG, WARNING).",
     ),
 ):
     """Rank job descriptions against the resume and persist scores."""
@@ -253,7 +253,10 @@ def main(
         LOGGER.info("LLM refinement requested; preparing top %d jobs.", llm_top_n)
         llm_candidates = _prepare_llm_jobs(ranked_jobs, max(1, llm_top_n))
         refined_scores = refine_scores(
-            llm_candidates, provider=llm_provider, model_name=llm_model
+            llm_candidates,
+            resume_text,
+            provider=llm_provider,
+            model_name=llm_model,
         )
         LOGGER.info("LLM returned refined scores for %d jobs.", len(refined_scores))
 

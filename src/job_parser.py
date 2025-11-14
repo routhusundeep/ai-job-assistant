@@ -724,7 +724,7 @@ def run_cli(
     log_level: Optional[str] = typer.Option(
         None,
         "--log-level",
-        help="Explicit logging level (e.g. INFO, DEBUG, WARNING). Overrides --verbose.",
+        help="Explicit logging level (e.g. INFO, DEBUG, WARNING).",
     ),
 ) -> None:
     """Run the LinkedIn scraping workflow."""
