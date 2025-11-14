@@ -9,7 +9,8 @@ from typing import List
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse
 
-from ..sql import fetch_job_with_score, fetch_jobs_with_scores
+from ..sql import ensure_schema, fetch_job_with_score, fetch_jobs_with_scores
+from .agent_routes import router as agent_router
 from .config import get_database_path
 from .schemas import (
     JobDetailResponse,
@@ -21,7 +22,12 @@ from .schemas import (
 
 PAGE_SIZE = 20
 TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
+
+# Ensure database schema (including new agent tables) exists when server starts.
+ensure_schema(get_database_path())
+
 app = FastAPI(title="AI Job Assistant", version="0.2.0")
+app.include_router(agent_router)
 
 
 @app.get("/all", response_model=JobListResponse)

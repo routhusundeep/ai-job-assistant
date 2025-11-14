@@ -48,6 +48,35 @@ CREATE TABLE IF NOT EXISTS resume_embeddings (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (resume_path, model_name)
 );
+
+CREATE TABLE IF NOT EXISTS job_fit_analyses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_key TEXT NOT NULL,
+    job_id TEXT,
+    score REAL,
+    summary TEXT NOT NULL,
+    instructions TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS resume_variants (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_key TEXT NOT NULL,
+    job_id TEXT,
+    content TEXT NOT NULL,
+    instructions TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS outreach_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_key TEXT NOT NULL,
+    job_id TEXT,
+    email_text TEXT NOT NULL,
+    linkedin_text TEXT NOT NULL,
+    instructions TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 
@@ -359,3 +388,131 @@ def fetch_job_with_score(database_path: Path, job_key: str) -> Optional[Dict[str
         "score": row["score"],
         "llm_refined_score": row["llm_refined_score"],
     }
+
+
+def insert_fit_analysis(
+    database_path: Path,
+    *,
+    job_key: str,
+    job_id: Optional[str],
+    score: Optional[float],
+    summary: str,
+    instructions: Optional[str],
+) -> Dict[str, Any]:
+    with sqlite3.connect(database_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO job_fit_analyses (job_key, job_id, score, summary, instructions)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (job_key, job_id, score, summary, instructions),
+        )
+        conn.commit()
+
+    return fetch_latest_fit_analysis(database_path, job_key) or {}
+
+
+def fetch_latest_fit_analysis(
+    database_path: Path, job_key: str
+) -> Optional[Dict[str, Any]]:
+    with sqlite3.connect(database_path) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            """
+            SELECT id, job_key, job_id, score, summary, instructions, created_at
+            FROM job_fit_analyses
+            WHERE job_key = ?
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (job_key,),
+        ).fetchone()
+
+    if not row:
+        return None
+    return dict(row)
+
+
+def insert_resume_variant(
+    database_path: Path,
+    *,
+    job_key: str,
+    job_id: Optional[str],
+    content: str,
+    instructions: Optional[str],
+) -> Dict[str, Any]:
+    with sqlite3.connect(database_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO resume_variants (job_key, job_id, content, instructions)
+            VALUES (?, ?, ?, ?)
+            """,
+            (job_key, job_id, content, instructions),
+        )
+        conn.commit()
+
+    return fetch_latest_resume_variant(database_path, job_key) or {}
+
+
+def fetch_latest_resume_variant(
+    database_path: Path, job_key: str
+) -> Optional[Dict[str, Any]]:
+    with sqlite3.connect(database_path) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            """
+            SELECT id, job_key, job_id, content, instructions, created_at
+            FROM resume_variants
+            WHERE job_key = ?
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (job_key,),
+        ).fetchone()
+
+    if not row:
+        return None
+    return dict(row)
+
+
+def insert_outreach_message(
+    database_path: Path,
+    *,
+    job_key: str,
+    job_id: Optional[str],
+    email_text: str,
+    linkedin_text: str,
+    instructions: Optional[str],
+) -> Dict[str, Any]:
+    with sqlite3.connect(database_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO outreach_messages (job_key, job_id, email_text, linkedin_text, instructions)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (job_key, job_id, email_text, linkedin_text, instructions),
+        )
+        conn.commit()
+
+    return fetch_latest_outreach_message(database_path, job_key) or {}
+
+
+def fetch_latest_outreach_message(
+    database_path: Path, job_key: str
+) -> Optional[Dict[str, Any]]:
+    with sqlite3.connect(database_path) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            """
+            SELECT id, job_key, job_id, email_text, linkedin_text, instructions, created_at
+            FROM outreach_messages
+            WHERE job_key = ?
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (job_key,),
+        ).fetchone()
+
+    if not row:
+        return None
+    return dict(row)

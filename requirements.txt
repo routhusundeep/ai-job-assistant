@@ -11,5 +11,6 @@ pylatexenc==2.10
 faiss-cpu
 ollama
 google-genai
+PyPDF2==3.0.1
 fastapi==0.115.0
 uvicorn[standard]==0.30.5

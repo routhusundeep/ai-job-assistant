@@ -26,3 +26,9 @@ Both pages call the REST API directly, so no additional frontend build tooling i
 
 - Scraper: `python -m src.scrape.job_parser --help`
 - Ranking: `python -m src.ranking.rank_jobs --help`
+
+## Job Assistant Pane
+
+- Configure `GOOGLE_API_KEY` and ensure `data/resume.pdf` exists locally (used as the master resume).
+- Open any job detail page (`/jobs/{job_key}`) to access the new pane for fit scoring, Gemini-tailored resumes (text output), and outreach drafts (email + LinkedIn). Optional instruction boxes let you guide each LLM call.
+- API endpoints live under `/agents/*` if you prefer to trigger the flows directly.
