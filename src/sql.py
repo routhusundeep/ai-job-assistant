@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple, Mapping
 
 DDL = """
 CREATE TABLE IF NOT EXISTS job_postings (
@@ -208,3 +208,150 @@ def upsert_resume_embedding(
             (str(resume_path), model_name, sqlite3.Binary(embedding)),
         )
         conn.commit()
+
+
+def fetch_jobs_with_scores(
+    database_path: Path,
+    page: int,
+    page_size: int,
+    sort_by: str,
+    order: str,
+    search: Optional[str],
+) -> Tuple[List[Dict[str, Any]], int]:
+    """Return paginated job postings joined with similarity scores."""
+
+    sort_column_map = {
+        "score": "s.score",
+        "title": "jp.title",
+        "company": "jp.company",
+    }
+    sort_column = sort_column_map.get(sort_by, "s.score")
+    sort_direction = "DESC" if order.lower() == "desc" else "ASC"
+
+    where_clauses: List[str] = []
+    params: List[Any] = []
+
+    if search:
+        trimmed = search.strip()
+        if trimmed:
+            pattern = f"%{trimmed}%"
+            where_clauses.append(
+                "(jp.title LIKE ? OR jp.company LIKE ? OR CAST(s.score AS TEXT) LIKE ?)"
+            )
+            params.extend([pattern, pattern, pattern])
+
+    where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+    offset = (page - 1) * page_size
+
+    base_query = """
+        FROM job_postings AS jp
+        LEFT JOIN scores AS s ON s.job_id = jp.job_id
+    """
+
+    with sqlite3.connect(database_path) as conn:
+        conn.row_factory = sqlite3.Row
+        count_row = conn.execute(
+            f"SELECT COUNT(*) {base_query} {where_sql}", params
+        ).fetchone()
+        total_count = int(count_row[0]) if count_row else 0
+
+        rows = conn.execute(
+            f"""
+            SELECT
+                jp.id,
+                jp.job_id,
+                jp.title,
+                jp.company,
+                jp.company_url,
+                jp.recruiter_url,
+                jp.salary_min,
+                jp.salary_max,
+                jp.url,
+                s.score,
+                s.llm_refined_score,
+                s.updated_at AS score_updated_at
+            {base_query}
+            {where_sql}
+            ORDER BY {sort_column} {sort_direction}, jp.created_at DESC
+            LIMIT ? OFFSET ?
+            """,
+            (*params, page_size, offset),
+        ).fetchall()
+
+    jobs: List[Dict[str, Any]] = []
+    for row in rows:
+        job_id_value = row["job_id"] if row["job_id"] else str(row["id"])
+        jobs.append(
+            {
+                "job_key": job_id_value,
+                "job_id": row["job_id"],
+                "title": row["title"],
+                "company": row["company"],
+                "company_url": row["company_url"],
+                "recruiter_url": row["recruiter_url"],
+                "salary_min": row["salary_min"],
+                "salary_max": row["salary_max"],
+                "url": row["url"],
+                "score": row["score"],
+                "llm_refined_score": row["llm_refined_score"],
+            }
+        )
+
+    return jobs, total_count
+
+
+def fetch_job_with_score(database_path: Path, job_key: str) -> Optional[Dict[str, Any]]:
+    """Return a single job posting (joined with score) by job_id or numeric id."""
+
+    params: List[Any] = [job_key]
+    where_clause = "jp.job_id = ?"
+
+    query = """
+        SELECT
+            jp.id,
+            jp.job_id,
+            jp.title,
+            jp.company,
+            jp.company_url,
+            jp.recruiter_url,
+            jp.salary_min,
+            jp.salary_max,
+            jp.description,
+            jp.url,
+            jp.created_at,
+            s.score,
+            s.llm_refined_score,
+            s.updated_at AS score_updated_at
+        FROM job_postings AS jp
+        LEFT JOIN scores AS s ON s.job_id = jp.job_id
+        WHERE {where_clause}
+        LIMIT 1
+    """
+
+    with sqlite3.connect(database_path) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(query.format(where_clause=where_clause), params).fetchone()
+
+        if not row and job_key.isdigit():
+            row = conn.execute(
+                query.format(where_clause="jp.id = ?"), (int(job_key),)
+            ).fetchone()
+
+    if not row:
+        return None
+
+    job_key_value = row["job_id"] if row["job_id"] else str(row["id"])
+    return {
+        "job_key": job_key_value,
+        "job_id": row["job_id"],
+        "title": row["title"],
+        "company": row["company"],
+        "company_url": row["company_url"],
+        "recruiter_url": row["recruiter_url"],
+        "salary_min": row["salary_min"],
+        "salary_max": row["salary_max"],
+        "description": row["description"],
+        "url": row["url"],
+        "score": row["score"],
+        "llm_refined_score": row["llm_refined_score"],
+    }
