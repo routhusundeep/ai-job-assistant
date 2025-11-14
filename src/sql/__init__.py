@@ -109,7 +109,10 @@ def upsert_score(
             VALUES (?, ?, ?)
             ON CONFLICT(job_id) DO UPDATE SET
                 score=excluded.score,
-                llm_refined_score=excluded.llm_refined_score,
+                llm_refined_score=COALESCE(
+                    excluded.llm_refined_score,
+                    llm_refined_score
+                ),
                 updated_at=CURRENT_TIMESTAMP
             """,
             (job_id, score, llm_refined_score),
