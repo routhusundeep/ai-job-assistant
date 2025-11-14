@@ -12,7 +12,7 @@ The server defaults to `data/jobs.db`. Override by exporting `JOB_ASSISTANT_DB=/
 
 ## REST endpoints
 
-- `GET /all` – Paginated list (20 per page) of job postings with company links, recruiter links, similarity scores, and LLM-refined scores. Supports `page`, `sort_by` (`score`, `title`, `company`), `order` (`asc|desc`), and `search` (matches title/company/score).
+- `GET /all` – Paginated list (20 per page) of job postings with company links, recruiter links, similarity scores, and LLM-refined scores. Supports `page`, `sort_by` (`score`, `llm_refined_score`, `title`, `company`), `order` (`asc|desc`), and `search` (matches title/company/score).
 - `GET /job/{job_key}` – Full detail for a single job, including salary band, description, and outbound URLs. Accepts either the LinkedIn `job_id` or the internal numeric id.
 
 ## Web UI

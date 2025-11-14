@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AI Job Assistant – Jobs</title>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <style>
+    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 2rem; }
+    table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+    th, td { padding: 0.5rem; border-bottom: 1px solid #ddd; text-align: left; }
+    th { cursor: pointer; }
+    tr:hover { background-color: #fafafa; }
+    .controls { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
+    .search-input { flex: 1; min-width: 200px; padding: 0.4rem; }
+    button { padding: 0.4rem 0.8rem; }
+    .muted { color: #6b7280; font-size: 0.9rem; }
+    .error { color: #b91c1c; margin-top: 0.5rem; }
+  </style>
+</head>
+<body x-data="jobTable()" x-init="init()">
+  <h1>Stored Jobs</h1>
+  <p class="muted">Search and sort the latest scraped roles. Click any title for the detail view.</p>
+  <div class="controls">
+    <input class="search-input" type="text" placeholder="Search title, company, score" x-model="search" @keyup.enter="applySearch()" />
+    <button type="button" @click="applySearch()">Search</button>
+    <button type="button" @click="resetSearch()">Reset</button>
+  </div>
+  <div class="error" x-text="error" x-show="error"></div>
+  <p class="muted" x-show="loading">Loading...</p>
+  <table x-show="!loading && jobs.length">
+    <thead>
+      <tr>
+        <th @click="sort('title')">Role</th>
+        <th @click="sort('company')">Company</th>
+        <th>Recruiter</th>
+        <th @click="sort('score')">Score</th>
+        <th @click="sort('llm_refined_score')">LLM Score</th>
+      </tr>
+    </thead>
+    <tbody>
+      <template x-for="job in jobs" :key="job.job_key">
+        <tr>
+          <td><a :href="`/jobs/${job.job_key}`" x-text="job.title"></a></td>
+          <td>
+            <template x-if="job.company_url">
+              <a :href="job.company_url" target="_blank" rel="noopener" x-text="job.company"></a>
+            </template>
+            <template x-if="!job.company_url">
+              <span x-text="job.company"></span>
+            </template>
+          </td>
+          <td>
+            <template x-if="job.recruiter_url">
+              <a :href="job.recruiter_url" target="_blank" rel="noopener">Profile</a>
+            </template>
+            <template x-if="!job.recruiter_url">
+              <span class="muted">-</span>
+            </template>
+          </td>
+          <td x-text="formatScore(job.score)"></td>
+          <td x-text="formatScore(job.llm_refined_score)"></td>
+        </tr>
+      </template>
+    </tbody>
+  </table>
+  <p class="muted" x-show="!loading && !jobs.length">No jobs found.</p>
+  <div class="controls" style="margin-top: 1rem;">
+    <button type="button" @click="goTo(page - 1)" :disabled="page === 1">Prev</button>
+    <span>Page <strong x-text="page"></strong> / <span x-text="totalPages"></span></span>
+    <button type="button" @click="goTo(page + 1)" :disabled="page === totalPages">Next</button>
+  </div>
+  <script>
+    function jobTable() {
+      return {
+        jobs: [],
+        page: 1,
+        totalPages: 1,
+        total: 0,
+        sortBy: 'score',
+        order: 'desc',
+        search: '',
+        loading: false,
+        error: '',
+        init() {
+          this.fetchJobs();
+        },
+        fetchJobs() {
+          this.loading = true;
+          this.error = '';
+          const params = new URLSearchParams({
+            page: this.page,
+            sort_by: this.sortBy,
+            order: this.order,
+          });
+          if (this.search.trim()) {
+            params.append('search', this.search.trim());
+          }
+          fetch(`/all?${params.toString()}`)
+            .then((resp) => {
+              if (!resp.ok) {
+                throw new Error('Failed to load jobs');
+              }
+              return resp.json();
+            })
+            .then((data) => {
+              this.jobs = data.jobs;
+              this.total = data.total;
+              this.page = data.page;
+              this.totalPages = Math.max(1, Math.ceil(data.total / data.page_size));
+            })
+            .catch((err) => {
+              this.error = err.message;
+            })
+            .finally(() => {
+              this.loading = false;
+            });
+        },
+        sort(column) {
+          if (this.sortBy === column) {
+            this.order = this.order === 'asc' ? 'desc' : 'asc';
+          } else {
+            this.sortBy = column;
+            const highFirst = ['score', 'llm_refined_score'].includes(column);
+            this.order = highFirst ? 'desc' : 'asc';
+          }
+          this.page = 1;
+          this.fetchJobs();
+        },
+        applySearch() {
+          this.page = 1;
+          this.fetchJobs();
+        },
+        resetSearch() {
+          this.search = '';
+          this.applySearch();
+        },
+        goTo(target) {
+          if (target < 1 || target > this.totalPages) {
+            return;
+          }
+          this.page = target;
+          this.fetchJobs();
+        },
+        formatScore(value) {
+          if (value === null || value === undefined) {
+            return '-';
+          }
+          return Number(value).toFixed(3);
+        },
+      };
+    }
+  </script>
+</body>
+</html>

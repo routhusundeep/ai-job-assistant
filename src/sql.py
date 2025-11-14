@@ -222,6 +222,7 @@ def fetch_jobs_with_scores(
 
     sort_column_map = {
         "score": "s.score",
+        "llm_refined_score": "s.llm_refined_score",
         "title": "jp.title",
         "company": "jp.company",
     }

@@ -12,6 +12,7 @@ class SortField(str, Enum):
     """Supported columns for sorting job results."""
 
     score = "score"
+    llm_refined_score = "llm_refined_score"
     title = "title"
     company = "company"
 
