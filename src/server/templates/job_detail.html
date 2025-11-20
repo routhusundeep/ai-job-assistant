@@ -17,6 +17,9 @@
     .agent-actions { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 0.5rem; }
     .agent-output { background: #f9fafb; padding: 0.75rem; border-radius: 6px; border: 1px solid #e5e7eb; }
     .agent-error { color: #b91c1c; margin-bottom: 0.5rem; }
+    .cta-bar { display: flex; gap: 0.75rem; margin: 0.75rem 0; flex-wrap: wrap; }
+    .cta-link { padding: 0.5rem 0.9rem; border: 1px solid #2563eb; border-radius: 6px; color: #2563eb; text-decoration: none; font-weight: 600; }
+    .cta-link:hover { background: #eff6ff; }
   </style>
 </head>
 <body x-data="jobDetail('{{JOB_KEY}}')" x-init="init()">
@@ -31,6 +34,10 @@
         <span class="muted" x-show="job.company_url">&middot; <a :href="job.company_url" target="_blank" rel="noopener">Company site</a></span>
         <span class="muted" x-show="job.recruiter_url">&middot; <a :href="job.recruiter_url" target="_blank" rel="noopener">Recruiter</a></span>
       </p>
+      <div class="cta-bar">
+        <a class="cta-link" :href="`/jobs/${jobKey}/tailor`">Tailor Resume</a>
+        <a class="cta-link" :href="`/jobs/${jobKey}/outreach`">Outreach</a>
+      </div>
       <div class="panel">
         <p><strong>Score:</strong> <span x-text="formatScore(job.score)"></span></p>
         <p><strong>LLM Score:</strong> <span x-text="formatScore(job.llm_refined_score)"></span></p>
@@ -43,7 +50,7 @@
       </div>
       <div class="panel">
         <h2>Job Assistant</h2>
-        <p class="muted">Run fit scoring, tailor the resume, or draft outreach without leaving this page.</p>
+        <p class="muted">Run fit scoring here. Use the links above for resume tailoring and outreach.</p>
         <div class="agent-error" x-text="agentError" x-show="agentError"></div>
         <section class="agent-section">
           <header>
@@ -64,45 +71,6 @@
             </div>
           </template>
         </section>
-        <section class="agent-section">
-          <header>
-            <h3>Tailored Resume</h3>
-            <span class="muted" x-show="agentState.resume_variant">Updated <span x-text="formatTimestamp(agentState.resume_variant?.created_at)"></span></span>
-          </header>
-          <p class="muted">Gemini rewrites your master resume (data/resume.pdf) for this role. Output stays text-only for now.</p>
-          <label>Optional instructions</label>
-          <textarea x-model="resumeInstructions" placeholder="Emphasize leadership on cloud migrations..."></textarea>
-          <div class="agent-actions">
-            <button type="button" @click="runResumeTailor()" :disabled="agentLoading.resume">Tailor Resume</button>
-            <span class="muted" x-show="agentLoading.resume">Generating tailored resume...</span>
-          </div>
-          <template x-if="agentState.resume_variant">
-            <div class="agent-output">
-              <pre x-text="agentState.resume_variant?.content"></pre>
-            </div>
-          </template>
-        </section>
-        <section class="agent-section">
-          <header>
-            <h3>Outreach Drafts</h3>
-            <span class="muted" x-show="agentState.outreach">Updated <span x-text="formatTimestamp(agentState.outreach?.created_at)"></span></span>
-          </header>
-          <p class="muted">Receive a concise email and LinkedIn message aligned to the role.</p>
-          <label>Optional instructions</label>
-          <textarea x-model="outreachInstructions" placeholder="Reference my open-source work on ..."></textarea>
-          <div class="agent-actions">
-            <button type="button" @click="runOutreach()" :disabled="agentLoading.outreach">Generate Outreach</button>
-            <span class="muted" x-show="agentLoading.outreach">Drafting outreach...</span>
-          </div>
-          <template x-if="agentState.outreach">
-            <div class="agent-output">
-              <h4>Email</h4>
-              <pre x-text="formatMessage(agentState.outreach?.email_text)"></pre>
-              <h4>LinkedIn Message</h4>
-              <pre x-text="formatMessage(agentState.outreach?.linkedin_text)"></pre>
-            </div>
-          </template>
-        </section>
       </div>
     </section>
   </template>
@@ -113,16 +81,10 @@
         job: null,
         loading: false,
         error: '',
-        agentState: {
-          fit_analysis: null,
-          resume_variant: null,
-          outreach: null,
-        },
-        agentLoading: { fit: false, resume: false, outreach: false },
+        agentState: { fit_analysis: null },
+        agentLoading: { fit: false },
         agentError: '',
         fitInstructions: '',
-        resumeInstructions: '',
-        outreachInstructions: '',
         init() {
           this.fetchJob();
           this.fetchAgentState();
@@ -188,58 +150,6 @@
               this.agentLoading.fit = false;
             });
         },
-        runResumeTailor() {
-          this.agentLoading.resume = true;
-          this.agentError = '';
-          fetch(`/agents/${encodeURIComponent(jobKey)}/tailor-resume`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ instructions: this.resumeInstructions || null }),
-          })
-            .then((resp) => {
-              if (!resp.ok) {
-                return resp.json().then((data) => {
-                  throw new Error(data.detail || 'Tailoring failed');
-                });
-              }
-              return resp.json();
-            })
-            .then((data) => {
-              this.agentState.resume_variant = data;
-            })
-            .catch((err) => {
-              this.agentError = err.message;
-            })
-            .finally(() => {
-              this.agentLoading.resume = false;
-            });
-        },
-        runOutreach() {
-          this.agentLoading.outreach = true;
-          this.agentError = '';
-          fetch(`/agents/${encodeURIComponent(jobKey)}/outreach`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ instructions: this.outreachInstructions || null }),
-          })
-            .then((resp) => {
-              if (!resp.ok) {
-                return resp.json().then((data) => {
-                  throw new Error(data.detail || 'Outreach failed');
-                });
-              }
-              return resp.json();
-            })
-            .then((data) => {
-              this.agentState.outreach = data;
-            })
-            .catch((err) => {
-              this.agentError = err.message;
-            })
-            .finally(() => {
-              this.agentLoading.outreach = false;
-            });
-        },
         formatScore(value) {
           if (value === null || value === undefined) {
             return '-';
@@ -265,26 +175,6 @@
             return '';
           }
           return new Date(value).toLocaleString();
-        },
-        formatMessage(value) {
-          if (!value) {
-            return '';
-          }
-          const trimmed = value.trim();
-          if (trimmed.startsWith('{')) {
-            try {
-              const parsed = JSON.parse(trimmed);
-              if (typeof parsed === 'object') {
-                return Object.values(parsed)
-                  .filter(Boolean)
-                  .map((entry) => String(entry))
-                  .join('\n');
-              }
-            } catch (err) {
-              // fall through to raw text
-            }
-          }
-          return trimmed;
         },
       };
     }

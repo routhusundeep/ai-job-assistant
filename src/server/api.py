@@ -82,6 +82,20 @@ async def job_page(job_key: str) -> HTMLResponse:
     return HTMLResponse(_render_job_detail_page(job_key))
 
 
+@app.get("/jobs/{job_key}/tailor", response_class=HTMLResponse)
+async def tailor_resume_page(job_key: str) -> HTMLResponse:
+    """Serve the dedicated resume tailoring page."""
+
+    return HTMLResponse(_render_tailor_page(job_key))
+
+
+@app.get("/jobs/{job_key}/outreach", response_class=HTMLResponse)
+async def outreach_page(job_key: str) -> HTMLResponse:
+    """Serve the dedicated outreach page."""
+
+    return HTMLResponse(_render_outreach_page(job_key))
+
+
 def _render_index_page() -> str:
     """Return the HTML for the landing page."""
 
@@ -93,6 +107,22 @@ def _render_job_detail_page(job_key: str) -> str:
 
     safe_job_key = html.escape(job_key)
     template = _read_template("job_detail.html")
+    return template.replace("{{JOB_KEY}}", safe_job_key)
+
+
+def _render_tailor_page(job_key: str) -> str:
+    """Return the HTML for the resume tailoring page."""
+
+    safe_job_key = html.escape(job_key)
+    template = _read_template("tailor.html")
+    return template.replace("{{JOB_KEY}}", safe_job_key)
+
+
+def _render_outreach_page(job_key: str) -> str:
+    """Return the HTML for the outreach page."""
+
+    safe_job_key = html.escape(job_key)
+    template = _read_template("outreach.html")
     return template.replace("{{JOB_KEY}}", safe_job_key)
 
 

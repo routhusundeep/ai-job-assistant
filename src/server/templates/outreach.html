@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Outreach – {{JOB_KEY}}</title>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <style>
+    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 2rem; max-width: 900px; }
+    .muted { color: #6b7280; font-size: 0.9rem; }
+    .panel { border: 1px solid #e5e7eb; border-radius: 8px; padding: 1rem; margin-top: 1rem; }
+    textarea { width: 100%; min-height: 90px; padding: 0.5rem; margin-top: 0.25rem; margin-bottom: 0.75rem; font-family: inherit; }
+    button { padding: 0.5rem 1rem; }
+    .agent-output { background: #f9fafb; padding: 0.75rem; border-radius: 6px; border: 1px solid #e5e7eb; white-space: pre-wrap; }
+    .agent-error { color: #b91c1c; margin-top: 0.5rem; }
+    .meta { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+  </style>
+</head>
+<body x-data="outreachPage('{{JOB_KEY}}')" x-init="init()">
+  <a :href="`/jobs/${jobKey}`">&larr; Back to job</a>
+  <div x-show="loading" class="muted">Loading job...</div>
+  <div x-show="error" class="agent-error" x-text="error"></div>
+  <template x-if="job">
+    <section>
+      <h1>Outreach</h1>
+      <p class="muted">Draft a concise email and LinkedIn message for this role.</p>
+      <div class="panel">
+        <div class="meta">
+          <span><strong x-text="job.title"></strong></span>
+          <span class="muted">&middot;</span>
+          <span x-text="job.company"></span>
+          <template x-if="job.recruiter_url">
+            <span class="muted">&middot; <a :href="job.recruiter_url" target="_blank" rel="noopener">Recruiter profile</a></span>
+          </template>
+        </div>
+        <p class="muted" style="margin-top:0.25rem;">Score: <span x-text="formatScore(job.score)"></span> | LLM Score: <span x-text="formatScore(job.llm_refined_score)"></span></p>
+      </div>
+      <div class="panel">
+        <h2>Generate outreach</h2>
+        <label>Optional instructions</label>
+        <textarea x-model="outreachInstructions" placeholder="Reference my open-source work on ..."></textarea>
+        <div style="display:flex; align-items:center; gap:0.5rem;">
+          <button type="button" @click="runOutreach()" :disabled="agentLoading" x-text="agentLoading ? 'Drafting...' : 'Generate Outreach'"></button>
+          <span class="muted" x-show="agentLoading">Drafting outreach...</span>
+        </div>
+        <div class="agent-error" x-text="agentError" x-show="agentError"></div>
+        <template x-if="agentState.outreach">
+          <div class="agent-output" style="margin-top:0.75rem;">
+            <p class="muted">Updated <span x-text="formatTimestamp(agentState.outreach?.created_at)"></span></p>
+            <h4>Email</h4>
+            <pre x-text="formatMessage(agentState.outreach?.email_text)"></pre>
+            <h4>LinkedIn Message</h4>
+            <pre x-text="formatMessage(agentState.outreach?.linkedin_text)"></pre>
+          </div>
+        </template>
+      </div>
+    </section>
+  </template>
+  <script>
+    function outreachPage(jobKey) {
+      return {
+        jobKey,
+        job: null,
+        loading: false,
+        error: '',
+        agentState: { outreach: null },
+        agentLoading: false,
+        agentError: '',
+        outreachInstructions: '',
+        init() {
+          this.fetchJob();
+          this.fetchAgentState();
+        },
+        fetchJob() {
+          this.loading = true;
+          this.error = '';
+          fetch(`/job/${encodeURIComponent(jobKey)}`)
+            .then((resp) => {
+              if (!resp.ok) {
+                throw new Error('Unable to load job');
+              }
+              return resp.json();
+            })
+            .then((data) => {
+              this.job = data;
+            })
+            .catch((err) => {
+              this.error = err.message;
+            })
+            .finally(() => {
+              this.loading = false;
+            });
+        },
+        fetchAgentState() {
+          fetch(`/agents/${encodeURIComponent(jobKey)}`)
+            .then((resp) => {
+              if (!resp.ok) {
+                throw new Error('Unable to load outreach drafts');
+              }
+              return resp.json();
+            })
+            .then((data) => {
+              this.agentState.outreach = data.outreach;
+            })
+            .catch((err) => {
+              this.agentError = err.message;
+            });
+        },
+        runOutreach() {
+          this.agentLoading = true;
+          this.agentError = '';
+          fetch(`/agents/${encodeURIComponent(jobKey)}/outreach`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ instructions: this.outreachInstructions || null }),
+          })
+            .then((resp) => {
+              if (!resp.ok) {
+                return resp.json().then((data) => {
+                  throw new Error(data.detail || 'Outreach failed');
+                });
+              }
+              return resp.json();
+            })
+            .then((data) => {
+              this.agentState.outreach = data;
+            })
+            .catch((err) => {
+              this.agentError = err.message;
+            })
+            .finally(() => {
+              this.agentLoading = false;
+            });
+        },
+        formatScore(value) {
+          if (value === null || value === undefined) {
+            return '-';
+          }
+          return Number(value).toFixed(3);
+        },
+        formatTimestamp(value) {
+          if (!value) {
+            return '';
+          }
+          return new Date(value).toLocaleString();
+        },
+        formatMessage(value) {
+          if (!value) {
+            return '';
+          }
+          const trimmed = value.trim();
+          if (trimmed.startsWith('{')) {
+            try {
+              const parsed = JSON.parse(trimmed);
+              if (typeof parsed === 'object') {
+                return Object.values(parsed)
+                  .filter(Boolean)
+                  .map((entry) => String(entry))
+                  .join('\n');
+              }
+            } catch (err) {
+              // fall through to raw text
+            }
+          }
+          return trimmed;
+        },
+      };
+    }
+  </script>
+</body>
+</html>
