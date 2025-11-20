@@ -30,7 +30,7 @@ def _load_client():
 def generate_gemini_content(
     prompt: str,
     *,
-    model: str = "gemini-2.0-flash",
+    model: str = "gemini-2.5-flash",
     system_instruction: Optional[str] = None,
 ) -> str:
     """Send a single prompt to Gemini and return the text response."""
