@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
@@ -20,6 +20,7 @@ from ..sql import (
     fetch_latest_fit_analysis,
     fetch_latest_outreach_message,
     fetch_latest_resume_version,
+    fetch_resume_versions,
     fetch_resume_version,
     insert_fit_analysis,
     insert_outreach_message,
@@ -61,6 +62,7 @@ class OutreachResponse(BaseModel):
 class AgentStateResponse(BaseModel):
     fit_analysis: Optional[FitAnalysisResponse]
     resume_variant: Optional[ResumeVariantResponse]
+    resume_versions: List[ResumeVariantResponse]
     outreach: Optional[OutreachResponse]
 
 
@@ -72,11 +74,13 @@ async def get_agent_state(job_key: str) -> AgentStateResponse:
 
     fit = fetch_latest_fit_analysis(db_path, job_key_value)
     resume_variant = fetch_latest_resume_version(db_path, job_key_value)
+    resume_versions = fetch_resume_versions(db_path, job_key_value, limit=50)
     outreach = fetch_latest_outreach_message(db_path, job_key_value)
 
     return AgentStateResponse(
         fit_analysis=_serialize_fit(fit),
         resume_variant=_serialize_resume(resume_variant),
+        resume_versions=[rv for rv in (_serialize_resume(item) for item in resume_versions) if rv],
         outreach=_serialize_outreach(outreach),
     )
 
@@ -210,8 +214,18 @@ def _serialize_fit(record: Optional[dict]) -> Optional[FitAnalysisResponse]:
 def _serialize_resume(record: Optional[dict]) -> Optional[ResumeVariantResponse]:
     if not record:
         return None
-    pdf_url = f"/agents/{record['job_key']}/resume/{record['version_id']}/pdf"
-    tex_url = f"/agents/{record['job_key']}/resume/{record['version_id']}/tex"
+    pdf_path = Path(record["pdf_path"]) if record.get("pdf_path") else None
+    tex_path = Path(record["tex_path"]) if record.get("tex_path") else None
+    pdf_url = (
+        f"/agents/{record['job_key']}/resume/{record['version_id']}/pdf"
+        if pdf_path and pdf_path.exists()
+        else None
+    )
+    tex_url = (
+        f"/agents/{record['job_key']}/resume/{record['version_id']}/tex"
+        if tex_path and tex_path.exists()
+        else None
+    )
     return ResumeVariantResponse(
         version_id=record["version_id"],
         page_count=record.get("page_count"),

@@ -14,6 +14,10 @@
     .agent-output { background: #f9fafb; padding: 0.75rem; border-radius: 6px; border: 1px solid #e5e7eb; white-space: pre-wrap; }
     .agent-error { color: #b91c1c; margin-top: 0.5rem; }
     .meta { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+    table { width: 100%; border-collapse: collapse; margin-top: 0.75rem; }
+    th, td { padding: 0.5rem; border-bottom: 1px solid #e5e7eb; text-align: left; }
+    th { background: #f3f4f6; }
+    .muted-link { color: #9ca3af; pointer-events: none; text-decoration: none; }
   </style>
 </head>
 <body x-data="tailorPage('{{JOB_KEY}}')" x-init="init()">
@@ -44,19 +48,46 @@
           <span class="muted" x-show="agentLoading">Generating tailored resume...</span>
         </div>
         <div class="agent-error" x-text="agentError" x-show="agentError"></div>
-        <template x-if="agentState.resume_variant">
-          <div class="agent-output" style="margin-top:0.75rem;">
-            <p class="muted">
-              Updated <span x-text="formatTimestamp(agentState.resume_variant?.created_at)"></span>
-              &middot; Status: <strong x-text="agentState.resume_variant?.status"></strong>
-              &middot; Pages: <span x-text="agentState.resume_variant?.page_count ?? '-'"></span>
-            </p>
-            <div style="display:flex; gap:0.75rem; flex-wrap:wrap; margin-top:0.5rem;">
-              <a :href="agentState.resume_variant?.pdf_url" target="_blank" rel="noopener">Download PDF</a>
-              <a :href="agentState.resume_variant?.tex_url" target="_blank" rel="noopener">Download TeX</a>
-            </div>
-          </div>
-        </template>
+      </div>
+
+      <div class="panel" x-show="agentState.resume_versions && agentState.resume_versions.length">
+        <h3>Versions</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Created</th>
+              <th>Status</th>
+              <th>Pages</th>
+              <th>Instructions</th>
+              <th>Downloads</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="version in agentState.resume_versions" :key="version.version_id">
+              <tr>
+                <td x-text="formatTimestamp(version.created_at)"></td>
+                <td x-text="version.status"></td>
+                <td x-text="version.page_count ?? '-'"></td>
+                <td x-text="version.instructions || '—'"></td>
+                <td>
+                  <template x-if="version.pdf_url">
+                    <a :href="version.pdf_url" target="_blank" rel="noopener">PDF</a>
+                  </template>
+                  <template x-if="!version.pdf_url">
+                    <span class="muted-link">PDF</span>
+                  </template>
+                  &middot;
+                  <template x-if="version.tex_url">
+                    <a :href="version.tex_url" target="_blank" rel="noopener">TeX</a>
+                  </template>
+                  <template x-if="!version.tex_url">
+                    <span class="muted-link">TeX</span>
+                  </template>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
       </div>
     </section>
   </template>
@@ -67,7 +98,7 @@
         job: null,
         loading: false,
         error: '',
-        agentState: { resume_variant: null },
+        agentState: { resume_variant: null, resume_versions: [] },
         agentLoading: false,
         agentError: '',
         resumeInstructions: '',
@@ -105,6 +136,7 @@
             })
             .then((data) => {
               this.agentState.resume_variant = data.resume_variant;
+              this.agentState.resume_versions = data.resume_versions || [];
             })
             .catch((err) => {
               this.agentError = err.message;
@@ -128,6 +160,9 @@
             })
             .then((data) => {
               this.agentState.resume_variant = data;
+              if (data) {
+                this.agentState.resume_versions = [data, ...this.agentState.resume_versions].slice(0, 50);
+              }
             })
             .catch((err) => {
               this.agentError = err.message;

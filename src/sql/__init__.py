@@ -559,3 +559,22 @@ def fetch_resume_version(
     if not row:
         return None
     return dict(row)
+
+
+def fetch_resume_versions(
+    database_path: Path, job_key: str, limit: int = 20
+) -> List[Dict[str, Any]]:
+    """Return recent resume versions for a job, newest first."""
+    with sqlite3.connect(database_path) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT version_id, job_key, job_id, tex_path, pdf_path, page_count, status, instructions, created_at
+            FROM resume_versions
+            WHERE job_key = ?
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (job_key, limit),
+        ).fetchall()
+    return [dict(row) for row in rows]
