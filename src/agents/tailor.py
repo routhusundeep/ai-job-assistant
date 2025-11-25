@@ -63,6 +63,7 @@ def tailor_resume_agentic(
     master_tex_path: Path,
     class_path: Path,
     instructions: Optional[str],
+    model: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Iteratively tailor the resume LaTeX and enforce one-page PDF."""
     if not master_tex_path.exists():
@@ -81,7 +82,7 @@ def tailor_resume_agentic(
 
     for _ in range(MAX_ITERATIONS):
         prompt = _build_tailor_prompt(job, attempt_tex, instructions, feedback)
-        response = generate_gemini_content(prompt)
+        response = generate_gemini_content(prompt, model=model) if model else generate_gemini_content(prompt)
         candidate_tex = _extract_code_block(response)
 
         VERSIONS_DIR.mkdir(parents=True, exist_ok=True)

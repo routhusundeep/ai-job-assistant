@@ -41,8 +41,17 @@
       </div>
       <div class="panel">
         <h2>Tailor for this role</h2>
-        <label>Optional instructions</label>
-        <textarea x-model="resumeInstructions" placeholder="Emphasize leadership on cloud migrations..."></textarea>
+        <div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.5rem; flex-wrap:wrap;">
+          <label style="margin:0;">Model</label>
+          <select x-model="model" style="width: 180px;">
+            <option value="gemini-2.5-flash">gemini-2.5-flash</option>
+            <option value="gemini-2.5-pro">gemini-2.5-pro</option>
+          </select>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:0.25rem; margin-bottom:0.75rem;">
+          <label>Optional instructions</label>
+          <textarea x-model="resumeInstructions" placeholder="Emphasize leadership on cloud migrations..."></textarea>
+        </div>
         <div style="display:flex; align-items:center; gap:0.5rem;">
           <button type="button" @click="runResumeTailor()" :disabled="agentLoading" x-text="agentLoading ? 'Tailoring...' : 'Tailor Resume'"></button>
           <span class="muted" x-show="agentLoading">Generating tailored resume...</span>
@@ -98,6 +107,7 @@
         agentLoading: false,
         agentError: '',
         resumeInstructions: '',
+        model: 'gemini-2.5-flash',
         init() {
           this.fetchJob();
           this.fetchAgentState();
@@ -144,7 +154,10 @@
           fetch(`/agents/${encodeURIComponent(jobKey)}/tailor-resume`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ instructions: this.resumeInstructions || null }),
+            body: JSON.stringify({
+              instructions: this.resumeInstructions || null,
+              model: this.model || null,
+            }),
           })
             .then((resp) => {
               if (!resp.ok) {

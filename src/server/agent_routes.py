@@ -33,6 +33,7 @@ router = APIRouter(prefix="/agents", tags=["agents"])
 
 class InstructionPayload(BaseModel):
     instructions: Optional[str] = None
+    model: Optional[str] = None
 
 
 class FitAnalysisResponse(BaseModel):
@@ -117,6 +118,7 @@ async def trigger_resume_tailoring(job_key: str, payload: InstructionPayload) ->
             master_tex_path=Path("data/resume.tex"),
             class_path=Path("data/rewrite.cls"),
             instructions=payload.instructions,
+            model=payload.model,
         )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -146,6 +148,7 @@ async def trigger_outreach(job_key: str, payload: InstructionPayload) -> Outreac
             job=job,
             resume_text=resume_text,
             instructions=payload.instructions,
+            model=payload.model or DEFAULT_MODEL,
         )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
