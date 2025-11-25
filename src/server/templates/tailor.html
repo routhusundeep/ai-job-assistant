@@ -56,8 +56,6 @@
           <thead>
             <tr>
               <th>Created</th>
-              <th>Status</th>
-              <th>Pages</th>
               <th>Instructions</th>
               <th>Downloads</th>
             </tr>
@@ -66,8 +64,6 @@
             <template x-for="version in agentState.resume_versions" :key="version.version_id">
               <tr>
                 <td x-text="formatTimestamp(version.created_at)"></td>
-                <td x-text="version.status"></td>
-                <td x-text="version.page_count ?? '-'"></td>
                 <td x-text="version.instructions || '—'"></td>
                 <td>
                   <template x-if="version.pdf_url">
