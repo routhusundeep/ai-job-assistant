@@ -59,21 +59,24 @@ CREATE TABLE IF NOT EXISTS job_fit_analyses (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS resume_variants (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    job_key TEXT NOT NULL,
-    job_id TEXT,
-    content TEXT NOT NULL,
-    instructions TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
 CREATE TABLE IF NOT EXISTS outreach_messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     job_key TEXT NOT NULL,
     job_id TEXT,
     email_text TEXT NOT NULL,
     linkedin_text TEXT NOT NULL,
+    instructions TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS resume_versions (
+    version_id TEXT PRIMARY KEY,
+    job_key TEXT NOT NULL,
+    job_id TEXT,
+    tex_path TEXT NOT NULL,
+    pdf_path TEXT NOT NULL,
+    page_count INTEGER,
+    status TEXT NOT NULL,
     instructions TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -433,48 +436,6 @@ def fetch_latest_fit_analysis(
     return dict(row)
 
 
-def insert_resume_variant(
-    database_path: Path,
-    *,
-    job_key: str,
-    job_id: Optional[str],
-    content: str,
-    instructions: Optional[str],
-) -> Dict[str, Any]:
-    with sqlite3.connect(database_path) as conn:
-        conn.execute(
-            """
-            INSERT INTO resume_variants (job_key, job_id, content, instructions)
-            VALUES (?, ?, ?, ?)
-            """,
-            (job_key, job_id, content, instructions),
-        )
-        conn.commit()
-
-    return fetch_latest_resume_variant(database_path, job_key) or {}
-
-
-def fetch_latest_resume_variant(
-    database_path: Path, job_key: str
-) -> Optional[Dict[str, Any]]:
-    with sqlite3.connect(database_path) as conn:
-        conn.row_factory = sqlite3.Row
-        row = conn.execute(
-            """
-            SELECT id, job_key, job_id, content, instructions, created_at
-            FROM resume_variants
-            WHERE job_key = ?
-            ORDER BY created_at DESC
-            LIMIT 1
-            """,
-            (job_key,),
-        ).fetchone()
-
-    if not row:
-        return None
-    return dict(row)
-
-
 def insert_outreach_message(
     database_path: Path,
     *,
@@ -513,6 +474,88 @@ def fetch_latest_outreach_message(
             (job_key,),
         ).fetchone()
 
+    if not row:
+        return None
+    return dict(row)
+
+
+def insert_resume_version(
+    database_path: Path,
+    *,
+    version_id: str,
+    job_key: str,
+    job_id: Optional[str],
+    tex_path: Path,
+    pdf_path: Path,
+    page_count: Optional[int],
+    status: str,
+    instructions: Optional[str],
+) -> Dict[str, Any]:
+    with sqlite3.connect(database_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO resume_versions (
+                version_id,
+                job_key,
+                job_id,
+                tex_path,
+                pdf_path,
+                page_count,
+                status,
+                instructions
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                version_id,
+                job_key,
+                job_id,
+                str(tex_path),
+                str(pdf_path),
+                page_count,
+                status,
+                instructions,
+            ),
+        )
+        conn.commit()
+
+    return fetch_resume_version(database_path, version_id) or {}
+
+
+def fetch_latest_resume_version(
+    database_path: Path, job_key: str
+) -> Optional[Dict[str, Any]]:
+    with sqlite3.connect(database_path) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            """
+            SELECT version_id, job_key, job_id, tex_path, pdf_path, page_count, status, instructions, created_at
+            FROM resume_versions
+            WHERE job_key = ?
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (job_key,),
+        ).fetchone()
+    if not row:
+        return None
+    return dict(row)
+
+
+def fetch_resume_version(
+    database_path: Path, version_id: str
+) -> Optional[Dict[str, Any]]:
+    with sqlite3.connect(database_path) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            """
+            SELECT version_id, job_key, job_id, tex_path, pdf_path, page_count, status, instructions, created_at
+            FROM resume_versions
+            WHERE version_id = ?
+            LIMIT 1
+            """,
+            (version_id,),
+        ).fetchone()
     if not row:
         return None
     return dict(row)

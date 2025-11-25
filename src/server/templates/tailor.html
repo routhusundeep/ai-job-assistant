@@ -46,8 +46,15 @@
         <div class="agent-error" x-text="agentError" x-show="agentError"></div>
         <template x-if="agentState.resume_variant">
           <div class="agent-output" style="margin-top:0.75rem;">
-            <p class="muted">Updated <span x-text="formatTimestamp(agentState.resume_variant?.created_at)"></span></p>
-            <pre x-text="agentState.resume_variant?.content"></pre>
+            <p class="muted">
+              Updated <span x-text="formatTimestamp(agentState.resume_variant?.created_at)"></span>
+              &middot; Status: <strong x-text="agentState.resume_variant?.status"></strong>
+              &middot; Pages: <span x-text="agentState.resume_variant?.page_count ?? '-'"></span>
+            </p>
+            <div style="display:flex; gap:0.75rem; flex-wrap:wrap; margin-top:0.5rem;">
+              <a :href="agentState.resume_variant?.pdf_url" target="_blank" rel="noopener">Download PDF</a>
+              <a :href="agentState.resume_variant?.tex_url" target="_blank" rel="noopener">Download TeX</a>
+            </div>
           </div>
         </template>
       </div>

@@ -45,7 +45,7 @@ Model choices and temperatures live in `agents/config.yaml`.
 ### Job Assistant Pane
 - Powered by FastAPI endpoints under `/agents/*` and surfaced on the job detail page.
 - Supports Gemini-based fit scoring, resume tailoring (using `data/resume.pdf` as the source of truth), and outreach drafts (email + LinkedIn).
-- Outputs are persisted in SQLite tables (`job_fit_analyses`, `resume_variants`, `outreach_messages`) for auditing and reuse.
+- Outputs are persisted in SQLite tables (`job_fit_analyses`, `resume_versions`, `outreach_messages`) for auditing and reuse.
 
 ## 🧪 Evaluation Metrics
 Metrics: time per application ≤15 minutes, recruiter response lift +10–20%, resume cosine similarity ≥0.85, LLM output validity ≥95%, plus qualitative recruiter sentiment logged per run.
