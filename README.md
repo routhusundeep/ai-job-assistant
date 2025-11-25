@@ -27,6 +27,11 @@ Both pages call the REST API directly, so no additional frontend build tooling i
 - Scraper: `python -m src.scrape.job_parser --help`
 - Ranking: `python -m src.ranking.rank_jobs --help`
 
+- Render master resume PDF from LaTeX (uses `tectonic`; on macOS install with `brew install tectonic`):
+  ```bash
+  python -m src.tools.render_resume --tex data/resume.tex --cls data/rewrite.cls --output data/resume.pdf
+  ```
+
 ## Job Assistant Pane
 
 - Configure `GOOGLE_API_KEY` and ensure `data/resume.pdf` exists locally (used as the master resume).
