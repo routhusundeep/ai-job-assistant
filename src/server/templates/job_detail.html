@@ -37,6 +37,9 @@
       <div class="cta-bar">
         <a class="cta-link" :href="`/jobs/${jobKey}/tailor`">Tailor Resume</a>
         <a class="cta-link" :href="`/jobs/${jobKey}/outreach`">Outreach</a>
+        <template x-if="job.apply_url">
+          <a class="cta-link" :href="`/jobs/${jobKey}/apply`" target="_blank" rel="noopener">Apply</a>
+        </template>
       </div>
       <div class="panel">
         <p><strong>Score:</strong> <span x-text="formatScore(job.score)"></span></p>

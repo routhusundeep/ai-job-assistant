@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS job_postings (
     salary_max REAL,
     description TEXT NOT NULL,
     url TEXT NOT NULL UNIQUE,
+    apply_url TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -105,7 +106,8 @@ def insert_job(database_path: Path, job: Mapping[str, Any]) -> bool:
                 salary_min,
                 salary_max,
                 description,
-                url
+                url,
+                apply_url
             )
             VALUES (
                 :job_id,
@@ -116,7 +118,8 @@ def insert_job(database_path: Path, job: Mapping[str, Any]) -> bool:
                 :salary_min,
                 :salary_max,
                 :description,
-                :url
+                :url,
+                :apply_url
             )
             """,
             job,
@@ -303,6 +306,7 @@ def fetch_jobs_with_scores(
                 jp.salary_min,
                 jp.salary_max,
                 jp.url,
+                jp.apply_url,
                 s.score,
                 s.llm_refined_score,
                 s.updated_at AS score_updated_at
@@ -328,6 +332,7 @@ def fetch_jobs_with_scores(
                 "salary_min": row["salary_min"],
                 "salary_max": row["salary_max"],
                 "url": row["url"],
+                "apply_url": row["apply_url"],
                 "score": row["score"],
                 "llm_refined_score": row["llm_refined_score"],
             }
@@ -354,6 +359,7 @@ def fetch_job_with_score(database_path: Path, job_key: str) -> Optional[Dict[str
             jp.salary_max,
             jp.description,
             jp.url,
+            jp.apply_url,
             jp.created_at,
             s.score,
             s.llm_refined_score,
@@ -388,6 +394,7 @@ def fetch_job_with_score(database_path: Path, job_key: str) -> Optional[Dict[str
         "salary_max": row["salary_max"],
         "description": row["description"],
         "url": row["url"],
+        "apply_url": row["apply_url"],
         "score": row["score"],
         "llm_refined_score": row["llm_refined_score"],
     }

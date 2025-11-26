@@ -34,6 +34,7 @@ class JobSummary(BaseModel):
     salary_min: Optional[float]
     salary_max: Optional[float]
     url: Optional[str]
+    apply_url: Optional[str]
     score: Optional[float]
     llm_refined_score: Optional[float]
 
@@ -56,6 +57,7 @@ class JobDetail(BaseModel):
     salary_max: Optional[float]
     description: str
     url: str
+    apply_url: Optional[str]
     score: Optional[float]
     llm_refined_score: Optional[float]
 

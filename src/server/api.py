@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import List
 
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 from ..sql import ensure_schema, fetch_job_with_score, fetch_jobs_with_scores
 from .agent_routes import router as agent_router
@@ -94,6 +94,16 @@ async def outreach_page(job_key: str) -> HTMLResponse:
     """Serve the dedicated outreach page."""
 
     return HTMLResponse(_render_outreach_page(job_key))
+
+
+@app.get("/jobs/{job_key}/apply")
+async def apply_redirect(job_key: str):
+    """Redirect to the job's apply URL if available."""
+
+    record = fetch_job_with_score(get_database_path(), job_key)
+    if not record or not record.get("apply_url"):
+        raise HTTPException(status_code=404, detail="Apply URL not found")
+    return RedirectResponse(url=record["apply_url"])
 
 
 def _render_index_page() -> str:

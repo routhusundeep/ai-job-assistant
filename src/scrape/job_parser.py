@@ -40,6 +40,7 @@ class JobPosting:
     company_url: Optional[str] = None
     salary_min: Optional[float] = None
     salary_max: Optional[float] = None
+    apply_url: Optional[str] = None
 
 
 @dataclass
@@ -353,6 +354,7 @@ class JobParserAgent:
 
         recruiter_url = self._extract_recruiter_url(page)
         salary_min, salary_max = self._extract_salary_range(page)
+        apply_url = self._extract_apply_url(page)
 
         return JobPosting(
             job_id=job_id,
@@ -362,9 +364,40 @@ class JobParserAgent:
             recruiter_url=recruiter_url,
             salary_min=salary_min,
             salary_max=salary_max,
+            apply_url=apply_url,
             description=description,
             url=f"https://www.linkedin.com/jobs/view/{job_id}/",
         )
+
+    def _extract_apply_url(self, page: Page) -> Optional[str]:
+        """Click the apply button and capture the URL from the new tab."""
+        try:
+            button = page.locator("button#jobs-apply-button-id").first
+            if button.count() == 0:
+                LOGGER.debug("Apply button not found for current job detail.")
+                return None
+
+            try:
+                label = (button.inner_text() or "").strip().lower()
+            except Exception:
+                label = ""
+
+            if "easy apply" in label:
+                LOGGER.debug("Easy Apply detected; marking apply_url as easy_apply://")
+                return "easy_apply://linkedin"
+
+            with page.context.expect_page() as new_page_info:
+                LOGGER.debug("Clicking apply button to capture apply_url.")
+                button.click(timeout=self.wait_timeout * 1000)
+            new_page = new_page_info.value
+            new_page.wait_for_load_state("domcontentloaded", timeout=self.wait_timeout * 1000)
+            apply_url = new_page.url
+            LOGGER.debug("Captured apply_url: %s", apply_url)
+            new_page.close()
+            return apply_url
+        except Exception as exc:
+            LOGGER.debug("Failed to capture apply_url: %s", exc)
+            return None
 
     def _extract_salary_range(
         self, page: Page
