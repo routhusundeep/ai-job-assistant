@@ -420,23 +420,24 @@ def set_preferred_resume_version(
 ) -> None:
     """Set the preferred resume version for a job (job_id or numeric id)."""
     with sqlite3.connect(database_path) as conn:
-        # Resolve job_key to job_id if needed
-        params = [version_id, job_key]
-        where_clause = "job_id = ?"
-        if not job_key or job_key.isdigit():
-            # Attempt numeric id fallback
-            params = [version_id, job_key if job_key else None]
-            where_clause = "id = ?"
-
-        # Try job_id first
-        conn.execute(
-            f"""
+        updated = conn.execute(
+            """
             UPDATE job_postings
             SET preferred_resume_version_id = ?
-            WHERE {where_clause}
+            WHERE job_id = ?
             """,
-            params,
-        )
+            (version_id, job_key),
+        ).rowcount
+
+        if updated == 0 and job_key and job_key.isdigit():
+            conn.execute(
+                """
+                UPDATE job_postings
+                SET preferred_resume_version_id = ?
+                WHERE id = ?
+                """,
+                (version_id, int(job_key)),
+            )
         conn.commit()
 
 

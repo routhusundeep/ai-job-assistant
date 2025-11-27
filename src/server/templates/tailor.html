@@ -152,6 +152,14 @@
             .then((data) => {
               this.agentState.resume_variant = data.resume_variant;
               this.agentState.resume_versions = data.resume_versions || [];
+              // Ensure preferred flags in list reflect latest preferred version
+              const preferredId = (data.resume_versions || []).find((v) => v.preferred)?.version_id;
+              if (preferredId) {
+                this.agentState.resume_versions = this.agentState.resume_versions.map((v) => ({
+                  ...v,
+                  preferred: v.version_id === preferredId,
+                }));
+              }
             })
             .catch((err) => {
               this.agentError = err.message;
@@ -204,10 +212,8 @@
               return resp.json();
             })
             .then((data) => {
-              this.agentState.resume_versions = this.agentState.resume_versions.map((v) => ({
-                ...v,
-                preferred: v.version_id === data.version_id,
-              }));
+              // Refresh state to reflect persisted preference
+              this.fetchAgentState();
             })
             .catch((err) => {
               this.agentError = err.message;
