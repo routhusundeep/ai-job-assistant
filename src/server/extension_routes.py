@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Dict, List, Optional
 from urllib.parse import urlparse
@@ -10,10 +11,18 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from ..agents.gemini import generate_gemini_content
 from ..sql import fetch_job_with_score
 from .config import get_database_path
 
 router = APIRouter(prefix="/extension", tags=["extension"])
+logger = logging.getLogger(__name__)
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s - %(message)s")
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+logger.setLevel(logging.DEBUG)
 
 PERSONAL_PATH = Path("data/personal.json")
 
@@ -56,60 +65,51 @@ def _allowed_host(url: str) -> bool:
     return bool(parsed.netloc)
 
 
-def _match_value(personal: Dict[str, str], field: FieldDescriptor) -> Optional[str]:
-    """Simple heuristic mapping without LLM to keep the extension thin."""
-    candidates = [field.name, field.field_id, field.label, field.placeholder]
-    text = " ".join(filter(None, candidates)).lower()
-    if not text:
-        return None
+def _build_prompt(personal: Dict[str, str], fields: List[FieldDescriptor]) -> str:
+    return (
+        "You fill a job application form using ONLY the provided personal data. "
+        "Return STRICT JSON with no extra text, no code fences, no explanations.\n\n"
+        "Personal data (JSON):\n"
+        f"{json.dumps(personal, ensure_ascii=False)}\n\n"
+        "Requested fields (JSON array):\n"
+        f"{json.dumps([field.dict() for field in fields], ensure_ascii=False)}\n\n"
+        "Respond with a JSON object mapping field_id to the value. "
+        "If a field cannot be filled, omit it. Do not invent new information."
+    )
 
-    def pick(*keys):
-        for key in keys:
-            if key in personal:
-                return str(personal[key])
-        return None
 
-    def pick_full_name() -> Optional[str]:
-        full = pick("full_name", "name")
-        if full:
-            return full
-        first = pick("first_name", "firstname", "name")
-        last = pick("last_name", "lastname")
-        if first and last:
-            return f"{first} {last}"
-        return first or last
-
-    if "full name" in text or "fullname" in text or ("full" in text and "name" in text):
-        return pick_full_name()
-    if "email" in text:
-        return pick("email", "mail")
-    if "phone" in text or "mobile" in text:
-        return pick("phone", "mobile")
-    if "first" in text and "name" in text:
-        return pick("first_name", "firstname", "name")
-    if "last" in text and "name" in text:
-        return pick("last_name", "lastname")
-    if "name" == text.strip():
-        return pick_full_name()
-    if "linkedin" in text:
-        return pick("linkedin", "linkedin_url")
-    if "github" in text:
-        return pick("github", "github_url")
-    if "portfolio" in text or "website" in text:
-        return pick("website", "portfolio")
-    if "city" in text or "location" in text:
-        return pick("location", "city")
-    if "country" in text:
-        return pick("country")
-    if "education" in text or "degree" in text:
-        return pick("education", "degree")
-    if "school" in text or "university" in text:
-        return pick("school", "university")
-    return None
+def _run_llm_mapping(personal: Dict[str, str], fields: List[FieldDescriptor]) -> Dict[str, str]:
+    prompt = _build_prompt(personal, fields)
+    try:
+        raw = generate_gemini_content(prompt, model="gemini-2.5-flash")
+    except Exception as exc:
+        logger.debug("LLM mapping failed: %s", exc)
+        return {}
+    raw = raw.strip()
+    if not raw:
+        logger.debug("LLM mapping returned empty payload")
+        return {}
+    # Strip fences if present
+    if raw.startswith("```"):
+        parts = raw.split("```")
+        raw = parts[1] if len(parts) >= 2 else raw
+    raw = raw.strip()
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, dict):
+            return {str(k): str(v) for k, v in parsed.items() if v is not None}
+    except json.JSONDecodeError:
+        logger.debug("LLM mapping returned non-JSON: %s", raw[:500])
+        return {}
+    return {}
 
 
 @router.post("/autofill", response_model=AutofillResponse)
 async def autofill(payload: AutofillRequest) -> AutofillResponse:
+    from logging import getLogger
+    logger = getLogger(__name__)
+    logger.debug("Autofill request: url=%s fields=%d job_key=%s", payload.url, len(payload.fields), payload.job_key)
+
     if not _allowed_host(payload.url):
         return AutofillResponse(skip=True, assignments=[])
 
@@ -120,13 +120,12 @@ async def autofill(payload: AutofillRequest) -> AutofillResponse:
             return AutofillResponse(skip=True, assignments=[])
 
     personal = _load_personal()
-    assignments: List[Assignment] = []
-    for field in payload.fields:
-        field_id = field.field_id or field.name or field.label or field.placeholder
-        if not field_id:
-            continue
-        value = _match_value(personal, field)
-        if value:
-            assignments.append(Assignment(field_id=field_id, value=value))
+    if not personal:
+        return AutofillResponse(skip=True, assignments=[])
 
+    values = _run_llm_mapping(personal, payload.fields)
+    logger.debug("Autofill response assignments: %s", values)
+    assignments: List[Assignment] = [
+        Assignment(field_id=field_id, value=value) for field_id, value in values.items() if value
+    ]
     return AutofillResponse(skip=False, assignments=assignments)
