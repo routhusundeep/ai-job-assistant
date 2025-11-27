@@ -33,6 +33,7 @@ class FieldDescriptor(BaseModel):
     label: Optional[str]
     placeholder: Optional[str]
     type: Optional[str]
+    options: Optional[List[str]] = None
 
 
 class AutofillRequest(BaseModel):

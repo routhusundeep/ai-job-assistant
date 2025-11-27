@@ -6,6 +6,8 @@ type FieldInfo = {
   type: string | null;
   field_id: string;
   element: HTMLElement;
+  optionLabel?: string | null;
+  options?: string[];
 };
 
 type Assignment = { field_id: string; value: string };
@@ -22,6 +24,23 @@ function collectFields(): FieldInfo[] {
   elements.forEach((el) => {
     const label = findLabel(el);
     const field_id = el.id || el.name || label || el.placeholder || "";
+    let optionLabel: string | null = null;
+    let options: string[] | undefined;
+    if (el instanceof HTMLInputElement && el.type === "radio") {
+      optionLabel = el.closest("label")?.textContent?.trim() || null;
+      if (el.name) {
+        const groupRadios = Array.from(
+          document.querySelectorAll<HTMLInputElement>(`input[type="radio"][name="${el.name}"]`)
+        );
+        options = Array.from(
+          new Set(
+            groupRadios
+              .map((r) => r.value || r.closest("label")?.textContent?.trim() || "")
+              .filter(Boolean)
+          )
+        );
+      }
+    }
     fields.push({
       name: el.name || null,
       id: el.id || null,
@@ -30,6 +49,8 @@ function collectFields(): FieldInfo[] {
       type: el.getAttribute("type"),
       field_id,
       element: el,
+      optionLabel,
+      options,
     });
   });
   return fields.filter((f) => f.field_id);
@@ -56,12 +77,13 @@ async function requestAssignments(url: string, fields: FieldInfo[]): Promise<Ass
   try {
     const payload = {
       url,
-      fields: fields.map(({ name, id, label, placeholder, type, field_id }) => ({
+      fields: fields.map(({ name, id, label, placeholder, type, field_id, options }) => ({
         name,
         field_id,
         label,
         placeholder,
         type,
+        options,
       })),
     };
     const resp = await fetch(`${baseUrl}/extension/autofill`, {
@@ -94,11 +116,23 @@ function applyAssignments(fields: FieldInfo[], assignments: Assignment[]) {
     if (value === undefined) return;
     const el = field.element as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
     try {
-      el.focus();
-      el.value = value;
-      el.dispatchEvent(new Event("input", { bubbles: true }));
-      el.dispatchEvent(new Event("change", { bubbles: true }));
-      filled += 1;
+      if (el instanceof HTMLInputElement && el.type === "radio") {
+        const target = value.toLowerCase();
+        const radioVal = (el.value || "").toLowerCase();
+        const radioLabel = (field.optionLabel || "").toLowerCase();
+        if (target === radioVal || target === radioLabel) {
+          el.checked = true;
+          el.dispatchEvent(new Event("input", { bubbles: true }));
+          el.dispatchEvent(new Event("change", { bubbles: true }));
+          filled += 1;
+        }
+      } else {
+        el.focus();
+        el.value = value;
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+        filled += 1;
+      }
     } catch (err) {
       console.warn("Unable to fill field", field.field_id, err);
     }
