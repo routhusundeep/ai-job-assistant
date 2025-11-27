@@ -54,30 +54,6 @@
         <h2>Description</h2>
         <pre x-text="job.description"></pre>
       </div>
-      <div class="panel">
-        <h2>Job Assistant</h2>
-        <p class="muted">Run fit scoring here. Use the links above for resume tailoring and outreach.</p>
-        <div class="agent-error" x-text="agentError" x-show="agentError"></div>
-        <section class="agent-section">
-          <header>
-            <h3>Fit Scoring</h3>
-            <span class="muted" x-show="agentState.fit_analysis">Updated <span x-text="formatTimestamp(agentState.fit_analysis?.created_at)"></span></span>
-          </header>
-          <p class="muted">Use existing similarity scores or rerun Gemini for a narrative assessment.</p>
-          <label>Optional instructions</label>
-          <textarea x-model="fitInstructions" placeholder="Highlight specific accomplishments to mention..."></textarea>
-          <div class="agent-actions">
-            <button type="button" @click="runFitAnalysis()" :disabled="agentLoading.fit" x-text="agentLoading.fit ? 'Evaluating...' : 'Run Fit Analysis'"></button>
-            <span class="muted" x-show="agentLoading.fit">Running fit analysis...</span>
-          </div>
-          <template x-if="agentState.fit_analysis">
-            <div class="agent-output">
-              <strong>Score:</strong> <span x-text="formatScore(agentState.fit_analysis?.score)"></span>
-              <p x-text="agentState.fit_analysis?.summary"></p>
-            </div>
-          </template>
-        </section>
-      </div>
     </section>
   </template>
   <script>
@@ -87,8 +63,8 @@
         job: null,
         loading: false,
         error: '',
-        agentState: { fit_analysis: null },
-        agentLoading: { fit: false },
+        agentState: {},
+        agentLoading: {},
         agentError: '',
         fitInstructions: '',
         init() {
@@ -124,43 +100,11 @@
               return resp.json();
             })
             .then((data) => {
-              this.agentState = data;
+              this.agentState = data || {};
             })
             .catch((err) => {
               this.agentError = err.message;
             });
-        },
-        runFitAnalysis() {
-          this.agentLoading.fit = true;
-          this.agentError = '';
-          fetch(`/agents/${encodeURIComponent(jobKey)}/fit-score`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ instructions: this.fitInstructions || null }),
-          })
-            .then((resp) => {
-              if (!resp.ok) {
-                return resp.json().then((data) => {
-                  throw new Error(data.detail || 'Fit scoring failed');
-                });
-              }
-              return resp.json();
-            })
-            .then((data) => {
-              this.agentState.fit_analysis = data;
-            })
-            .catch((err) => {
-              this.agentError = err.message;
-            })
-            .finally(() => {
-              this.agentLoading.fit = false;
-            });
-        },
-        formatScore(value) {
-          if (value === null || value === undefined) {
-            return '-';
-          }
-          return Number(value).toFixed(3);
         },
         formatSalary(min, max) {
           const hasMin = min !== null && min !== undefined;
@@ -181,6 +125,12 @@
             return '';
           }
           return new Date(value).toLocaleString();
+        },
+        formatScore(value) {
+          if (value === null || value === undefined) {
+            return '-';
+          }
+          return Number(value).toFixed(3);
         },
       };
     }

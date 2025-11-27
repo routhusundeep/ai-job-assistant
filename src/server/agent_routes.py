@@ -11,18 +11,15 @@ from pydantic import BaseModel
 
 from ..agents import (
     load_master_resume_text,
-    run_fit_analysis,
     run_outreach_generation,
 )
 from ..agents.tailor import tailor_resume_agentic
 from ..sql import (
     fetch_job_with_score,
-    fetch_latest_fit_analysis,
     fetch_latest_outreach_message,
     fetch_latest_resume_version,
     fetch_resume_versions,
     fetch_resume_version,
-    insert_fit_analysis,
     insert_outreach_message,
     insert_resume_version,
 )
@@ -34,13 +31,6 @@ router = APIRouter(prefix="/agents", tags=["agents"])
 class InstructionPayload(BaseModel):
     instructions: Optional[str] = None
     model: Optional[str] = None
-
-
-class FitAnalysisResponse(BaseModel):
-    summary: str
-    score: Optional[float]
-    created_at: Optional[str] = None
-    instructions: Optional[str] = None
 
 
 class ResumeVariantResponse(BaseModel):
@@ -61,7 +51,6 @@ class OutreachResponse(BaseModel):
 
 
 class AgentStateResponse(BaseModel):
-    fit_analysis: Optional[FitAnalysisResponse]
     resume_variant: Optional[ResumeVariantResponse]
     resume_versions: List[ResumeVariantResponse]
     outreach: Optional[OutreachResponse]
@@ -73,39 +62,15 @@ async def get_agent_state(job_key: str) -> AgentStateResponse:
     job = _load_job(job_key, db_path)
     job_key_value = job["job_key"]
 
-    fit = fetch_latest_fit_analysis(db_path, job_key_value)
     resume_variant = fetch_latest_resume_version(db_path, job_key_value)
     resume_versions = fetch_resume_versions(db_path, job_key_value, limit=50)
     outreach = fetch_latest_outreach_message(db_path, job_key_value)
 
     return AgentStateResponse(
-        fit_analysis=_serialize_fit(fit),
         resume_variant=_serialize_resume(resume_variant),
         resume_versions=[rv for rv in (_serialize_resume(item) for item in resume_versions) if rv],
         outreach=_serialize_outreach(outreach),
     )
-
-
-@router.post("/{job_key}/fit-score", response_model=FitAnalysisResponse)
-async def trigger_fit_analysis(job_key: str, payload: InstructionPayload) -> FitAnalysisResponse:
-    db_path = server_db_path()
-    job = _load_job(job_key, db_path)
-    resume_text = load_master_resume_text()
-
-    try:
-        result = run_fit_analysis(job=job, resume_text=resume_text, instructions=payload.instructions)
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    stored = insert_fit_analysis(
-        db_path,
-        job_key=job["job_key"],
-        job_id=job.get("job_id"),
-        score=result.get("score"),
-        summary=result.get("summary", ""),
-        instructions=payload.instructions,
-    )
-    return _serialize_fit(stored)
 
 
 @router.post("/{job_key}/tailor-resume", response_model=ResumeVariantResponse)
@@ -201,17 +166,6 @@ def _load_job(job_key: str, db_path):
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     return job
-
-
-def _serialize_fit(record: Optional[dict]) -> Optional[FitAnalysisResponse]:
-    if not record:
-        return None
-    return FitAnalysisResponse(
-        summary=record["summary"],
-        score=record.get("score"),
-        created_at=record.get("created_at"),
-        instructions=record.get("instructions"),
-    )
 
 
 def _serialize_resume(record: Optional[dict]) -> Optional[ResumeVariantResponse]:

@@ -6,9 +6,9 @@ import json
 import textwrap
 from typing import Any, Dict, Optional
 
-from .gemini import GeminiError, generate_gemini_content
+from .gemini import generate_gemini_content
 
-DEFAULT_MODEL = "gemini-2.0-flash"
+DEFAULT_MODEL = "gemini-2.5-flash"
 
 
 def run_fit_analysis(
@@ -63,7 +63,9 @@ def run_outreach_generation(
     return {"email": email.strip(), "linkedin": linkedin.strip()}
 
 
-def _build_fit_prompt(job: Dict[str, Any], resume_text: str, instructions: Optional[str]) -> str:
+def _build_fit_prompt(
+    job: Dict[str, Any], resume_text: str, instructions: Optional[str]
+) -> str:
     details = textwrap.dedent(
         f"""
         Job Title: {job['title']}
@@ -92,7 +94,9 @@ def _build_fit_prompt(job: Dict[str, Any], resume_text: str, instructions: Optio
     ).strip()
 
 
-def _build_resume_prompt(job: Dict[str, Any], resume_text: str, instructions: Optional[str]) -> str:
+def _build_resume_prompt(
+    job: Dict[str, Any], resume_text: str, instructions: Optional[str]
+) -> str:
     base_rules = (
         "Tailor the resume for the specific job while keeping it to a single page, "
         "preserving truthful experience, and avoiding exaggerated or new skills."
@@ -114,7 +118,9 @@ Description:\n{job['description']}
     ).strip()
 
 
-def _build_outreach_prompt(job: Dict[str, Any], resume_text: str, instructions: Optional[str]) -> str:
+def _build_outreach_prompt(
+    job: Dict[str, Any], resume_text: str, instructions: Optional[str]
+) -> str:
     extra = f"\nCustom instructions: {instructions.strip()}" if instructions else ""
     recruiter_line = (
         f"You may reference recruiter profile: {job['recruiter_url']}."
