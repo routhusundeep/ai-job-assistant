@@ -136,3 +136,6 @@ driver/
 data/
 secure/
 query/
+
+
+extension/node_modules

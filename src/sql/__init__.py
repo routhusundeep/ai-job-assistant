@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS job_postings (
     description TEXT NOT NULL,
     url TEXT NOT NULL UNIQUE,
     apply_url TEXT,
+    preferred_resume_version_id TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -89,7 +90,17 @@ def ensure_schema(database_path: Path) -> None:
     database_path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(database_path) as conn:
         conn.executescript(DDL)
+        _add_column_if_missing(conn, "job_postings", "apply_url", "TEXT")
+        _add_column_if_missing(conn, "job_postings", "preferred_resume_version_id", "TEXT")
         conn.commit()
+
+
+def _add_column_if_missing(conn: sqlite3.Connection, table: str, column: str, col_type: str) -> None:
+    """Add a column to a table if it does not already exist."""
+    existing = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    if any(row[1] == column for row in existing):
+        return
+    conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
 
 
 def insert_job(database_path: Path, job: Mapping[str, Any]) -> bool:
@@ -307,6 +318,7 @@ def fetch_jobs_with_scores(
                 jp.salary_max,
                 jp.url,
                 jp.apply_url,
+                jp.preferred_resume_version_id,
                 s.score,
                 s.llm_refined_score,
                 s.updated_at AS score_updated_at
@@ -333,6 +345,7 @@ def fetch_jobs_with_scores(
                 "salary_max": row["salary_max"],
                 "url": row["url"],
                 "apply_url": row["apply_url"],
+                "preferred_resume_version_id": row["preferred_resume_version_id"],
                 "score": row["score"],
                 "llm_refined_score": row["llm_refined_score"],
             }
@@ -360,6 +373,7 @@ def fetch_job_with_score(database_path: Path, job_key: str) -> Optional[Dict[str
             jp.description,
             jp.url,
             jp.apply_url,
+            jp.preferred_resume_version_id,
             jp.created_at,
             s.score,
             s.llm_refined_score,
@@ -395,9 +409,35 @@ def fetch_job_with_score(database_path: Path, job_key: str) -> Optional[Dict[str
         "description": row["description"],
         "url": row["url"],
         "apply_url": row["apply_url"],
+        "preferred_resume_version_id": row["preferred_resume_version_id"],
         "score": row["score"],
         "llm_refined_score": row["llm_refined_score"],
     }
+
+
+def set_preferred_resume_version(
+    database_path: Path, job_key: str, version_id: Optional[str]
+) -> None:
+    """Set the preferred resume version for a job (job_id or numeric id)."""
+    with sqlite3.connect(database_path) as conn:
+        # Resolve job_key to job_id if needed
+        params = [version_id, job_key]
+        where_clause = "job_id = ?"
+        if not job_key or job_key.isdigit():
+            # Attempt numeric id fallback
+            params = [version_id, job_key if job_key else None]
+            where_clause = "id = ?"
+
+        # Try job_id first
+        conn.execute(
+            f"""
+            UPDATE job_postings
+            SET preferred_resume_version_id = ?
+            WHERE {where_clause}
+            """,
+            params,
+        )
+        conn.commit()
 
 
 def insert_fit_analysis(

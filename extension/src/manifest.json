@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "AI Job Assistant Autofill",
+  "version": "0.1.0",
+  "description": "Autofill job applications using your local AI Job Assistant",
+  "permissions": ["activeTab", "scripting", "storage"],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [],
+  "options_page": "options.html",
+  "action": {
+    "default_title": "Job Assistant"
+  }
+}

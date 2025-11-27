@@ -20,6 +20,7 @@ from ..sql import (
     fetch_latest_resume_version,
     fetch_resume_versions,
     fetch_resume_version,
+    set_preferred_resume_version,
     insert_outreach_message,
     insert_resume_version,
 )
@@ -31,6 +32,7 @@ router = APIRouter(prefix="/agents", tags=["agents"])
 class InstructionPayload(BaseModel):
     instructions: Optional[str] = None
     model: Optional[str] = None
+    version_id: Optional[str] = None
 
 
 class ResumeVariantResponse(BaseModel):
@@ -41,6 +43,7 @@ class ResumeVariantResponse(BaseModel):
     tex_url: Optional[str]
     created_at: Optional[str] = None
     instructions: Optional[str] = None
+    preferred: bool = False
 
 
 class OutreachResponse(BaseModel):
@@ -55,20 +58,26 @@ class AgentStateResponse(BaseModel):
     resume_versions: List[ResumeVariantResponse]
     outreach: Optional[OutreachResponse]
 
+class PreferredPayload(BaseModel):
+    version_id: str
+
 
 @router.get("/{job_key}", response_model=AgentStateResponse)
 async def get_agent_state(job_key: str) -> AgentStateResponse:
     db_path = server_db_path()
     job = _load_job(job_key, db_path)
     job_key_value = job["job_key"]
+    preferred_version = job.get("preferred_resume_version_id")
 
     resume_variant = fetch_latest_resume_version(db_path, job_key_value)
     resume_versions = fetch_resume_versions(db_path, job_key_value, limit=50)
     outreach = fetch_latest_outreach_message(db_path, job_key_value)
 
     return AgentStateResponse(
-        resume_variant=_serialize_resume(resume_variant),
-        resume_versions=[rv for rv in (_serialize_resume(item) for item in resume_versions) if rv],
+        resume_variant=_serialize_resume(resume_variant, preferred_version),
+        resume_versions=[
+            rv for rv in (_serialize_resume(item, preferred_version) for item in resume_versions) if rv
+        ],
         outreach=_serialize_outreach(outreach),
     )
 
@@ -129,6 +138,19 @@ async def trigger_outreach(job_key: str, payload: InstructionPayload) -> Outreac
     return _serialize_outreach(stored)
 
 
+@router.post("/{job_key}/resume/preferred", response_model=ResumeVariantResponse)
+async def set_preferred_resume(job_key: str, payload: PreferredPayload) -> ResumeVariantResponse:
+    db_path = server_db_path()
+    job = _load_job(job_key, db_path)
+    record = fetch_resume_version(db_path, payload.version_id)
+    if not record or record["job_key"] != job["job_key"]:
+        raise HTTPException(status_code=404, detail="Resume version not found for this job")
+
+    set_preferred_resume_version(db_path, job["job_key"], payload.version_id)
+    preferred_version = payload.version_id
+    return _serialize_resume(record, preferred_version=preferred_version)
+
+
 @router.get("/{job_key}/resume/{version_id}/pdf")
 async def download_tailored_resume_pdf(job_key: str, version_id: str):
     db_path = server_db_path()
@@ -168,7 +190,7 @@ def _load_job(job_key: str, db_path):
     return job
 
 
-def _serialize_resume(record: Optional[dict]) -> Optional[ResumeVariantResponse]:
+def _serialize_resume(record: Optional[dict], preferred_version: Optional[str] = None) -> Optional[ResumeVariantResponse]:
     if not record:
         return None
     pdf_path = Path(record["pdf_path"]) if record.get("pdf_path") else None
@@ -189,6 +211,7 @@ def _serialize_resume(record: Optional[dict]) -> Optional[ResumeVariantResponse]
         status=record.get("status") or "unknown",
         pdf_url=pdf_url,
         tex_url=tex_url,
+        preferred=record["version_id"] == preferred_version,
         created_at=record.get("created_at"),
         instructions=record.get("instructions"),
     )

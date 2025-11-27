@@ -66,6 +66,7 @@
             <tr>
               <th>Created</th>
               <th>Instructions</th>
+              <th>Preferred</th>
               <th>Downloads</th>
             </tr>
           </thead>
@@ -74,6 +75,14 @@
               <tr>
                 <td x-text="formatTimestamp(version.created_at)"></td>
                 <td x-text="version.instructions || '—'"></td>
+                <td>
+                  <template x-if="version.preferred">
+                    <span class="muted">Preferred</span>
+                  </template>
+                  <template x-if="!version.preferred">
+                    <button type="button" @click="setPreferred(version.version_id)" style="padding:0.3rem 0.6rem;">Set preferred</button>
+                  </template>
+                </td>
                 <td>
                   <template x-if="version.pdf_url">
                     <a :href="version.pdf_url" target="_blank" rel="noopener">PDF</a>
@@ -178,6 +187,30 @@
             })
             .finally(() => {
               this.agentLoading = false;
+            });
+        },
+        setPreferred(versionId) {
+          fetch(`/agents/${encodeURIComponent(jobKey)}/resume/preferred`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ version_id: versionId }),
+          })
+            .then((resp) => {
+              if (!resp.ok) {
+                return resp.json().then((data) => {
+                  throw new Error(data.detail || 'Unable to set preferred');
+                });
+              }
+              return resp.json();
+            })
+            .then((data) => {
+              this.agentState.resume_versions = this.agentState.resume_versions.map((v) => ({
+                ...v,
+                preferred: v.version_id === data.version_id,
+              }));
+            })
+            .catch((err) => {
+              this.agentError = err.message;
             });
         },
         formatScore(value) {

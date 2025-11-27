@@ -37,6 +37,7 @@ class JobSummary(BaseModel):
     apply_url: Optional[str]
     score: Optional[float]
     llm_refined_score: Optional[float]
+    preferred_resume_version_id: Optional[str]
 
 
 class JobListResponse(BaseModel):
@@ -60,6 +61,7 @@ class JobDetail(BaseModel):
     apply_url: Optional[str]
     score: Optional[float]
     llm_refined_score: Optional[float]
+    preferred_resume_version_id: Optional[str]
 
 
 class JobDetailResponse(JobDetail):

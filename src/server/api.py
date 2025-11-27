@@ -8,9 +8,11 @@ from typing import List
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.middleware.cors import CORSMiddleware
 
 from ..sql import ensure_schema, fetch_job_with_score, fetch_jobs_with_scores
 from .agent_routes import router as agent_router
+from .extension_routes import router as extension_router
 from .config import get_database_path
 from .schemas import (
     JobDetailResponse,
@@ -27,7 +29,15 @@ TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
 ensure_schema(get_database_path())
 
 app = FastAPI(title="AI Job Assistant", version="0.2.0")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 app.include_router(agent_router)
+app.include_router(extension_router)
 
 
 @app.get("/all", response_model=JobListResponse)

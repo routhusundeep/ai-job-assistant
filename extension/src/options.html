@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>AI Job Assistant Extension Settings</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 16px; }
+      label { display: block; margin-bottom: 6px; }
+      input { width: 320px; padding: 6px; }
+      button { margin-top: 8px; padding: 6px 10px; }
+      #status { margin-left: 8px; color: #16a34a; }
+    </style>
+  </head>
+  <body>
+    <label for="apiBase">App API base URL (e.g., http://localhost:8000)</label>
+    <input id="apiBase" type="text" placeholder="http://localhost:8000" />
+    <div>
+      <button id="saveBtn">Save</button><span id="status"></span>
+    </div>
+    <script type="module" src="options.js"></script>
+  </body>
+</html>
