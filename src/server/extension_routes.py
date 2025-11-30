@@ -109,7 +109,13 @@ def _run_llm_mapping(personal: Dict[str, str], fields: List[FieldDescriptor]) ->
 async def autofill(payload: AutofillRequest) -> AutofillResponse:
     from logging import getLogger
     logger = getLogger(__name__)
-    logger.debug("Autofill request: url=%s fields=%d job_key=%s", payload.url, len(payload.fields), payload.job_key)
+    logger.debug(
+        "Autofill request: url=%s fields=%d job_key=%s fields_detail=%s",
+        payload.url,
+        len(payload.fields),
+        payload.job_key,
+        [field.dict() for field in payload.fields],
+    )
 
     if not _allowed_host(payload.url):
         return AutofillResponse(skip=True, assignments=[])
