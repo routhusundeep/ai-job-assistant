@@ -29,11 +29,14 @@ PERSONAL_PATH = Path("data/personal.json")
 
 class FieldDescriptor(BaseModel):
     name: Optional[str]
+    id: Optional[str]
     field_id: Optional[str]
-    label: Optional[str]
+    labels: List[str] = []
     placeholder: Optional[str]
     type: Optional[str]
     options: Optional[List[str]] = None
+    multiple: Optional[bool] = None
+    semantic: Optional[str] = None
 
 
 class AutofillRequest(BaseModel):
@@ -69,13 +72,14 @@ def _allowed_host(url: str) -> bool:
 def _build_prompt(personal: Dict[str, str], fields: List[FieldDescriptor]) -> str:
     return (
         "You fill a job application form using ONLY the provided personal data. "
-        "Return STRICT JSON with no extra text, no code fences, no explanations.\n\n"
+        "Return ONLY a JSON object mapping field_id to value. "
+        "No code fences, no prefixes, no markdown, no text before or after. "
+        "If a field cannot be filled, omit it. Do not invent new information.\n\n"
         "Personal data (JSON):\n"
         f"{json.dumps(personal, ensure_ascii=False)}\n\n"
         "Requested fields (JSON array):\n"
         f"{json.dumps([field.dict() for field in fields], ensure_ascii=False)}\n\n"
-        "Respond with a JSON object mapping field_id to the value. "
-        "If a field cannot be filled, omit it. Do not invent new information."
+        "Respond with the JSON object only."
     )
 
 

@@ -1,59 +1,114 @@
 type FieldInfo = {
+  field_id: string;
   name: string | null;
   id: string | null;
-  label: string | null;
+  labels: string[];
   placeholder: string | null;
-  type: string | null;
-  field_id: string;
-  element: HTMLElement;
-  optionLabel?: string | null;
+  type: string;
   options?: string[];
+  multiple?: boolean;
+  semantic: string;
+  element: HTMLElement;
 };
 
 type Assignment = { field_id: string; value: string };
 
-const overlayId = "__job_assistant_overlay";
+const seenElements = new WeakSet<HTMLElement>();
 
 function collectFields(): FieldInfo[] {
   const fields: FieldInfo[] = [];
-  const elements = Array.from(
-    document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(
-      "input, textarea, select"
-    )
-  );
-  elements.forEach((el) => {
-    const label = findLabel(el);
-    const field_id = el.id || el.name || label || el.placeholder || "";
-    let optionLabel: string | null = null;
-    let options: string[] | undefined;
-    if (el instanceof HTMLInputElement && el.type === "radio") {
-      optionLabel = el.closest("label")?.textContent?.trim() || null;
-      if (el.name) {
-        const groupRadios = Array.from(
-          document.querySelectorAll<HTMLInputElement>(`input[type="radio"][name="${el.name}"]`)
-        );
-        options = Array.from(
-          new Set(
-            groupRadios
-              .map((r) => r.value || r.closest("label")?.textContent?.trim() || "")
-              .filter(Boolean)
-          )
-        );
-      }
+  traverseNodes(document.body, (el) => {
+    if (!(el instanceof HTMLElement)) return;
+    if (seenElements.has(el)) return;
+    if (!isVisible(el)) return;
+
+    const tag = el.tagName.toLowerCase();
+    const typeAttr = (el.getAttribute("type") || "").toLowerCase();
+    const isContentEditable = el.getAttribute("contenteditable") === "true";
+
+    if (el instanceof HTMLInputElement) {
+      if (el.disabled || el.readOnly) return;
+      if (["hidden", "file", "button", "submit"].includes(typeAttr)) return;
     }
-    fields.push({
-      name: el.name || null,
-      id: el.id || null,
-      label,
-      placeholder: el.getAttribute("placeholder"),
-      type: el.getAttribute("type"),
-      field_id,
-      element: el,
-      optionLabel,
-      options,
-    });
+
+    if (tag === "input" || tag === "textarea" || tag === "select" || isContentEditable) {
+      const baseType =
+        tag === "select"
+          ? "select"
+          : isContentEditable
+            ? "richtext"
+            : typeAttr || "text";
+
+      if (
+        ![
+          "text",
+          "email",
+          "tel",
+          "number",
+          "radio",
+          "checkbox",
+          "password",
+          "url",
+          "select",
+          "richtext",
+        ].includes(baseType)
+      ) {
+        return;
+      }
+
+      const labels = collectLabels(el);
+      const field_id = domPath(el);
+
+      const field: FieldInfo = {
+        field_id,
+        name: (el as HTMLInputElement).name || null,
+        id: el.id || null,
+        labels,
+        placeholder: (el as HTMLInputElement).placeholder || null,
+        type: baseType,
+        semantic: classifyField((el as HTMLInputElement).name, el.id, (el as HTMLInputElement).placeholder, labels),
+        element: el,
+      };
+
+      if (el instanceof HTMLSelectElement) {
+        field.options = Array.from(el.options).map((opt) => opt.text || opt.value || "");
+        field.multiple = el.multiple;
+      }
+
+      fields.push(field);
+      seenElements.add(el);
+    }
   });
-  return fields.filter((f) => f.field_id);
+
+  // Group radios/checkboxes by name into single logical field
+  const grouped: FieldInfo[] = [];
+  const radioGroups = new Map<string, FieldInfo>();
+
+  fields.forEach((f) => {
+    if (f.type === "radio" || f.type === "checkbox") {
+      const name = f.name || f.id || f.field_id;
+      const key = `${f.type}::${name}`;
+      const existing = radioGroups.get(key);
+      const optionLabel = f.labels[0] || "";
+      if (existing) {
+        const opts = new Set(existing.options || []);
+        opts.add(optionLabel);
+        existing.options = Array.from(opts);
+      } else {
+        radioGroups.set(key, {
+          ...f,
+          field_id: key,
+          options: f.options && f.options.length ? f.options : optionLabel ? [optionLabel] : [],
+          labels: f.labels,
+        });
+      }
+    } else {
+      grouped.push(f);
+    }
+  });
+
+  grouped.push(...radioGroups.values());
+  return fields;
 }
 
 function findLabel(el: HTMLElement): string | null {
@@ -70,20 +125,23 @@ function findLabel(el: HTMLElement): string | null {
 async function requestAssignments(url: string, fields: FieldInfo[]): Promise<Assignment[] | null> {
   const baseUrl = await getApiBase();
   if (!baseUrl) {
-    showOverlay("No API base configured", true);
+    console.warn("No API base configured");
     return null;
   }
 
   try {
     const payload = {
       url,
-      fields: fields.map(({ name, id, label, placeholder, type, field_id, options }) => ({
+      fields: fields.map(({ name, id, labels, placeholder, type, field_id, options, multiple, semantic }) => ({
         name,
+        id,
         field_id,
-        label,
+        labels,
         placeholder,
         type,
         options,
+        multiple,
+        semantic,
       })),
     };
     const resp = await fetch(`${baseUrl}/extension/autofill`, {
@@ -92,18 +150,17 @@ async function requestAssignments(url: string, fields: FieldInfo[]): Promise<Ass
       body: JSON.stringify(payload),
     });
     if (!resp.ok) {
-      showOverlay("Autofill: server error", true);
+      console.warn("Autofill: server error");
       return null;
     }
     const data = await resp.json();
     if (data.skip) {
-      showOverlay("Autofill skipped for this domain", true);
+      console.info("Autofill skipped for this domain");
       return null;
     }
     return data.assignments || [];
   } catch (err) {
     console.error("Autofill request failed", err);
-    showOverlay("Autofill failed", true);
     return null;
   }
 }
@@ -116,16 +173,22 @@ function applyAssignments(fields: FieldInfo[], assignments: Assignment[]) {
     if (value === undefined) return;
     const el = field.element as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
     try {
-      if (el instanceof HTMLInputElement && el.type === "radio") {
-        const target = value.toLowerCase();
-        const radioVal = (el.value || "").toLowerCase();
-        const radioLabel = (field.optionLabel || "").toLowerCase();
-        if (target === radioVal || target === radioLabel) {
-          el.checked = true;
-          el.dispatchEvent(new Event("input", { bubbles: true }));
-          el.dispatchEvent(new Event("change", { bubbles: true }));
-          filled += 1;
-        }
+      if (field.type === "radio" || field.type === "checkbox") {
+        const groupName = field.name || field.id || field.field_id;
+        const group = document.querySelectorAll<HTMLInputElement>(
+          `input[type="${field.type}"][name="${groupName}"]`
+        );
+        group.forEach((r) => {
+          const target = value.toLowerCase();
+          const radioVal = (r.value || "").toLowerCase();
+          const radioLabel = (r.closest("label")?.textContent || "").toLowerCase();
+          if (target === radioVal || target === radioLabel) {
+            r.checked = true;
+            r.dispatchEvent(new Event("input", { bubbles: true }));
+            r.dispatchEvent(new Event("change", { bubbles: true }));
+            filled += 1;
+          }
+        });
       } else {
         el.focus();
         el.value = value;
@@ -137,31 +200,7 @@ function applyAssignments(fields: FieldInfo[], assignments: Assignment[]) {
       console.warn("Unable to fill field", field.field_id, err);
     }
   });
-  showOverlay(`Autofilled ${filled} fields`);
-}
-
-function showOverlay(message: string, isError = false) {
-  let overlay = document.getElementById(overlayId);
-  if (!overlay) {
-    overlay = document.createElement("div");
-    overlay.id = overlayId;
-    overlay.style.position = "fixed";
-    overlay.style.bottom = "16px";
-    overlay.style.right = "16px";
-    overlay.style.padding = "10px 12px";
-    overlay.style.borderRadius = "8px";
-    overlay.style.zIndex = "999999";
-    overlay.style.fontFamily = "sans-serif";
-    overlay.style.fontSize = "14px";
-    overlay.style.boxShadow = "0 4px 12px rgba(0,0,0,0.15)";
-    document.body.appendChild(overlay);
-  }
-  overlay.textContent = message;
-  overlay.style.background = isError ? "#fee2e2" : "#ecfeff";
-  overlay.style.color = isError ? "#991b1b" : "#0f172a";
-  setTimeout(() => {
-    overlay?.remove();
-  }, 4000);
+  console.info(`Autofilled ${filled} fields`);
 }
 
 async function getApiBase(): Promise<string | null> {
@@ -172,12 +211,131 @@ async function getApiBase(): Promise<string | null> {
   });
 }
 
-(async () => {
-  const fields = collectFields();
-  if (!fields.length) return;
-  const url = window.location.href;
-  const assignments = await requestAssignments(url, fields);
-  if (assignments && assignments.length) {
-    applyAssignments(fields, assignments);
+function sanitizeLabel(label: string | null): string | null {
+  if (!label) return label;
+  return label.replace(/\s+/g, " ").replace(/[✱*]+/g, "").trim();
+}
+
+function collectLabels(el: HTMLElement): string[] {
+  const labels = new Set<string>();
+  const cleaned = (txt: string | null) => sanitizeLabel(txt)?.trim();
+  const fromAttr = cleaned(el.getAttribute("aria-label"));
+  if (fromAttr) labels.add(fromAttr);
+
+  const ariaIds = (el.getAttribute("aria-labelledby") || "")
+    .split(/\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  ariaIds.forEach((id) => {
+    const node = document.getElementById(id);
+    if (node?.textContent) {
+      const txt = cleaned(node.textContent);
+      if (txt) labels.add(txt);
+    }
+  });
+
+  const id = (el as HTMLInputElement).id;
+  if (id) {
+    const label = document.querySelector(`label[for='${id}']`);
+    if (label && label.textContent) {
+      const txt = cleaned(label.textContent);
+      if (txt) labels.add(txt);
+    }
   }
+  const parentLabel = el.closest("label");
+  if (parentLabel?.textContent) {
+    const txt = cleaned(parentLabel.textContent);
+    if (txt) labels.add(txt);
+  }
+  return Array.from(labels);
+}
+
+function domPath(el: HTMLElement): string {
+  const segments: string[] = [];
+  let node: HTMLElement | null = el;
+  while (node && node.nodeType === Node.ELEMENT_NODE && node.tagName.toLowerCase() !== "body") {
+    const parent = node.parentElement;
+    if (!parent) break;
+    const siblings = Array.from(parent.children).filter(
+      (sibling) => sibling.tagName === node!.tagName
+    );
+    const index = siblings.indexOf(node);
+    segments.push(`${node.tagName.toLowerCase()}:${index}`);
+    node = parent;
+  }
+  segments.reverse();
+  return `/${segments.join("/")}`;
+}
+
+function classifyField(
+  name: string | null,
+  id: string | null,
+  placeholder: string | null,
+  labels: string[]
+): string {
+  const text = [name, id, placeholder, ...labels]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ");
+  const has = (pattern: RegExp) => pattern.test(text);
+  if (has(/\bemail\b/)) return "email";
+  if (has(/\b(phone|mobile|tel)\b/)) return "phone";
+  if (has(/\bpassword\b/)) return "password";
+  if (has(/\b(first|given)\s*name\b/)) return "first_name";
+  if (has(/\b(last|family)\s*name\b/)) return "last_name";
+  if (has(/\b(address|street)\b/)) return "address";
+  if (has(/\bcity\b/)) return "city";
+  if (has(/\bstate\b/)) return "state";
+  if (has(/\bzip|postal\b/)) return "zip";
+  return "unknown";
+}
+
+function isVisible(el: HTMLElement): boolean {
+  const style = window.getComputedStyle(el);
+  if (style.display === "none" || style.visibility === "hidden" || parseFloat(style.opacity) === 0) {
+    return false;
+  }
+  const rect = el.getBoundingClientRect();
+  if (rect.width === 0 || rect.height === 0) return false;
+  return true;
+}
+
+function traverseNodes(root: HTMLElement | ShadowRoot, cb: (el: HTMLElement) => void) {
+  const walk = (node: HTMLElement | ShadowRoot) => {
+    node.childNodes.forEach((child) => {
+      if (child instanceof HTMLElement) {
+        cb(child);
+        if (child.shadowRoot) {
+          walk(child.shadowRoot);
+        }
+        walk(child);
+      }
+    });
+  };
+  walk(root);
+}
+
+(async () => {
+  if ((window as any).__jobAssistantContentLoaded) {
+    return;
+  }
+  (window as any).__jobAssistantContentLoaded = true;
+
+  const run = async () => {
+    const fields = collectFields();
+    if (!fields.length) return;
+    const url = window.location.href;
+    const assignments = await requestAssignments(url, fields);
+    if (assignments && assignments.length) {
+      applyAssignments(fields, assignments);
+    }
+  };
+
+  await run();
+
+  const observer = new MutationObserver(() => {
+    run();
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
 })();
