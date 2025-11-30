@@ -9,6 +9,7 @@ from typing import Dict, List, Optional
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from ..agents.gemini import generate_gemini_content
@@ -67,6 +68,38 @@ def _load_personal() -> Dict[str, str]:
 def _allowed_host(url: str) -> bool:
     parsed = urlparse(url)
     return bool(parsed.netloc)
+
+
+def _match_job_by_url(target_url: str) -> Optional[dict]:
+    """Best-effort match job by domain against apply_url or url."""
+    parsed_target = urlparse(target_url)
+    target_host = parsed_target.netloc.lower()
+    db_path = get_database_path()
+    # fetch a small set of candidates
+    conn = None
+    try:
+        import sqlite3
+
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT job_id, url, apply_url
+            FROM job_postings
+            WHERE apply_url IS NOT NULL OR url IS NOT NULL
+            """
+        ).fetchall()
+        for row in rows:
+            for candidate in [row["apply_url"], row["url"]]:
+                if not candidate:
+                    continue
+                host = urlparse(candidate).netloc.lower()
+                if host and host in target_host:
+                    return dict(row)
+    finally:
+        if conn:
+            conn.close()
+    return None
 
 
 def _build_prompt(personal: Dict[str, str], fields: List[FieldDescriptor]) -> str:
@@ -140,3 +173,37 @@ async def autofill(payload: AutofillRequest) -> AutofillResponse:
         Assignment(field_id=field_id, value=value) for field_id, value in values.items() if value
     ]
     return AutofillResponse(skip=False, assignments=assignments)
+
+
+@router.post("/resume")
+async def fetch_resume_file(payload: AutofillRequest):
+    """Return the preferred/ latest/ master resume PDF for the inferred job or fallback to master."""
+    job_record = _match_job_by_url(payload.url)
+    db_path = get_database_path()
+
+    pdf_path = Path("data/resume.pdf")  # fallback
+
+    if job_record:
+        preferred_id = job_record.get("preferred_resume_version_id")
+        if preferred_id:
+            version = fetch_resume_version(db_path, preferred_id)
+            if version and version.get("pdf_path") and Path(version["pdf_path"]).exists():
+                pdf_path = Path(version["pdf_path"])
+        if pdf_path.name == "resume.pdf":
+            # try latest version for this job_id
+            from ..sql import fetch_resume_versions
+
+            versions = fetch_resume_versions(db_path, job_record.get("job_id") or job_record.get("id"), limit=1)
+            if versions:
+                ver = versions[0]
+                if ver.get("pdf_path") and Path(ver["pdf_path"]).exists():
+                    pdf_path = Path(ver["pdf_path"])
+
+    if not pdf_path.exists():
+        raise HTTPException(status_code=404, detail="Resume PDF not found")
+
+    return FileResponse(
+        path=pdf_path,
+        media_type="application/pdf",
+        filename=pdf_path.name,
+    )

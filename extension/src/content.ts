@@ -108,7 +108,7 @@ function collectFields(): FieldInfo[] {
   });
 
   grouped.push(...radioGroups.values());
-  return fields;
+  return grouped;
 }
 
 function findLabel(el: HTMLElement): string | null {
@@ -330,6 +330,7 @@ function traverseNodes(root: HTMLElement | ShadowRoot, cb: (el: HTMLElement) => 
     if (assignments && assignments.length) {
       applyAssignments(fields, assignments);
     }
+    await uploadResumeIfNeeded(url);
   };
 
   await run();
@@ -339,3 +340,44 @@ function traverseNodes(root: HTMLElement | ShadowRoot, cb: (el: HTMLElement) => 
   });
   observer.observe(document.body, { childList: true, subtree: true });
 })();
+
+async function uploadResumeIfNeeded(pageUrl: string) {
+  const fileInputs = collectFileInputs();
+  if (!fileInputs.length) return;
+  const baseUrl = await getApiBase();
+  if (!baseUrl) return;
+  try {
+    const resp = await fetch(`${baseUrl}/extension/resume`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: pageUrl, fields: [] }),
+    });
+    if (!resp.ok) {
+      console.warn("Resume fetch failed");
+      return;
+    }
+    const blob = await resp.blob();
+    const file = new File([blob], "resume.pdf", { type: "application/pdf" });
+    const dt = new DataTransfer();
+    dt.items.add(file);
+    fileInputs.forEach((input) => {
+      input.files = dt.files;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    console.info("Resume attached to file inputs");
+  } catch (err) {
+    console.error("Resume upload failed", err);
+  }
+}
+
+function collectFileInputs(): HTMLInputElement[] {
+  const inputs: HTMLInputElement[] = [];
+  traverseNodes(document.body, (el) => {
+    if (!(el instanceof HTMLInputElement)) return;
+    if (el.type !== "file") return;
+    if (el.disabled || el.readOnly) return;
+    inputs.push(el);
+  });
+  return inputs;
+}
