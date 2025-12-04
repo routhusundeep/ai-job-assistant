@@ -58,9 +58,15 @@ def run_outreach_generation(
     prompt = _build_outreach_prompt(job, resume_text, instructions)
     response = generate_gemini_content(prompt, model=model)
     payload = _safe_json_loads(response)
-    email = payload.get("email") or payload.get("email_text") or response
-    linkedin = payload.get("linkedin") or payload.get("linkedin_message") or response
-    return {"email": email.strip(), "linkedin": linkedin.strip()}
+    email_raw = payload.get("email") or payload.get("email_text")
+    linkedin_raw = payload.get("linkedin") or payload.get("linkedin_message")
+    email = _coerce_to_text(email_raw).strip()
+    linkedin = _coerce_to_text(linkedin_raw).strip()
+    if not email:
+        email = _coerce_to_text(response).strip()
+    if not linkedin:
+        linkedin = _coerce_to_text(response).strip()
+    return {"email": email, "linkedin": linkedin}
 
 
 def _build_fit_prompt(
@@ -161,3 +167,27 @@ def _safe_json_loads(payload: str) -> Dict[str, Any]:
             except json.JSONDecodeError:
                 return {"summary": payload}
         return {"summary": payload}
+
+
+def _coerce_to_text(value: Any) -> str:
+    """Best-effort conversion of structured LLM output into plain text."""
+
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (int, float, bool)):
+        return str(value)
+    if isinstance(value, dict):
+        parts = []
+        for key, item in value.items():
+            text = _coerce_to_text(item).strip()
+            if not text:
+                continue
+            parts.append(f"{key}: {text}")
+        return "\n".join(parts)
+    if isinstance(value, (list, tuple, set)):
+        return "\n".join(
+            segment for segment in (_coerce_to_text(item).strip() for item in value) if segment
+        )
+    return str(value)

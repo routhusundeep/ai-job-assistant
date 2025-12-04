@@ -626,3 +626,54 @@ def fetch_resume_versions(
             (job_key, limit),
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+def delete_resume_versions(database_path: Path, job_key: str) -> int:
+    """Delete all resume versions for a job, remove files, and clear preferred pointer. Returns rows deleted."""
+    with sqlite3.connect(database_path) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT tex_path, pdf_path
+            FROM resume_versions
+            WHERE job_key = ?
+            """,
+            (job_key,),
+        ).fetchall()
+
+        conn.execute(
+            """
+            UPDATE job_postings
+            SET preferred_resume_version_id = NULL
+            WHERE job_id = ?
+            """,
+            (job_key,),
+        )
+        if job_key.isdigit():
+            conn.execute(
+                """
+                UPDATE job_postings
+                SET preferred_resume_version_id = NULL
+                WHERE id = ?
+                """,
+                (int(job_key),),
+            )
+
+        cursor = conn.execute(
+            """
+            DELETE FROM resume_versions
+            WHERE job_key = ?
+            """,
+            (job_key,),
+        )
+        conn.commit()
+
+    for row in rows:
+        for key in ("tex_path", "pdf_path"):
+            path = row[key]
+            if path and Path(path).exists():
+                try:
+                    Path(path).unlink()
+                except OSError:
+                    continue
+        return cursor.rowcount

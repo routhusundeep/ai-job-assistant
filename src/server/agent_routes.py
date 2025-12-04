@@ -20,6 +20,7 @@ from ..sql import (
     fetch_latest_resume_version,
     fetch_resume_versions,
     fetch_resume_version,
+    delete_resume_versions,
     set_preferred_resume_version,
     insert_outreach_message,
     insert_resume_version,
@@ -60,6 +61,10 @@ class AgentStateResponse(BaseModel):
 
 class PreferredPayload(BaseModel):
     version_id: str
+
+
+class ClearResponse(BaseModel):
+    cleared: int
 
 
 @router.get("/{job_key}", response_model=AgentStateResponse)
@@ -149,6 +154,14 @@ async def set_preferred_resume(job_key: str, payload: PreferredPayload) -> Resum
     set_preferred_resume_version(db_path, job["job_key"], payload.version_id)
     preferred_version = payload.version_id
     return _serialize_resume(record, preferred_version=preferred_version)
+
+
+@router.post("/{job_key}/resume/clear", response_model=ClearResponse)
+async def clear_resume_versions(job_key: str) -> ClearResponse:
+    db_path = server_db_path()
+    _load_job(job_key, db_path)  # validate job exists
+    cleared = delete_resume_versions(db_path, job_key)
+    return ClearResponse(cleared=cleared)
 
 
 @router.get("/{job_key}/resume/{version_id}/pdf")

@@ -60,7 +60,10 @@
       </div>
 
       <div class="panel" x-show="agentState.resume_versions && agentState.resume_versions.length">
-        <h3>Versions</h3>
+        <div style="display:flex; align-items:center; justify-content:space-between;">
+          <h3 style="margin:0;">Versions</h3>
+          <button type="button" @click="clearVersions()" style="padding:0.3rem 0.6rem;">Clear</button>
+        </div>
         <table>
           <thead>
             <tr>
@@ -213,6 +216,25 @@
             })
             .then((data) => {
               // Refresh state to reflect persisted preference
+              this.fetchAgentState();
+            })
+            .catch((err) => {
+              this.agentError = err.message;
+            });
+        },
+        clearVersions() {
+          fetch(`/agents/${encodeURIComponent(jobKey)}/resume/clear`, {
+            method: 'POST',
+          })
+            .then((resp) => {
+              if (!resp.ok) {
+                return resp.json().then((data) => {
+                  throw new Error(data.detail || 'Unable to clear versions');
+                });
+              }
+              return resp.json();
+            })
+            .then(() => {
               this.fetchAgentState();
             })
             .catch((err) => {
