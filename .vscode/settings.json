@@ -18,12 +18,10 @@
     "latex-workshop.latex.tools": [
         {
             "name": "tectonic",
-            "command": "tectonic",
+            "command": "/bin/sh",
             "args": [
-                "--synctex",
-                "--keep-logs",
-                "--keep-intermediates",
-                "%DOC%"
+                "-c",
+                "cd \"%DIR%\" && tectonic -X compile --synctex --keep-logs --keep-intermediates --outdir=build \"%DOCFILE_EXT%\""
             ]
         }
     ],
@@ -45,5 +43,6 @@
         "*.synctex.gz"
     ],
     "latex-workshop.latex.clean.subfolder.enabled": true,
-    "latex-workshop.formatting.latex": "latexindent"
+    "latex-workshop.formatting.latex": "latexindent",
+    "latex-workshop.latex.recipe.default": "tectonic"
 }
