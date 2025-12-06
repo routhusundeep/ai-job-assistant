@@ -317,28 +317,17 @@ function traverseNodes(root: HTMLElement | ShadowRoot, cb: (el: HTMLElement) => 
 }
 
 (async () => {
-  if ((window as any).__jobAssistantContentLoaded) {
-    return;
-  }
-  (window as any).__jobAssistantContentLoaded = true;
-
-  const run = async () => {
-    const fields = collectFields();
-    if (!fields.length) return;
-    const url = window.location.href;
+  const url = window.location.href;
+  const fields = collectFields();
+  if (fields.length) {
     const assignments = await requestAssignments(url, fields);
     if (assignments && assignments.length) {
       applyAssignments(fields, assignments);
     }
-    await uploadResumeIfNeeded(url);
-  };
-
-  await run();
-
-  const observer = new MutationObserver(() => {
-    run();
-  });
-  observer.observe(document.body, { childList: true, subtree: true });
+  } else {
+    console.info("No visible fields detected for autofill.");
+  }
+  await uploadResumeIfNeeded(url);
 })();
 
 async function uploadResumeIfNeeded(pageUrl: string) {

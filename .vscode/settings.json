@@ -1,0 +1,49 @@
+{
+    "python.formatting.provider": "black",
+    "python.formatting.blackArgs": [
+        "--line-length",
+        "100"
+    ],
+    "python.linting.enabled": true,
+    "python.linting.flake8Enabled": true,
+    "python.linting.flake8Args": [
+        "--max-line-length=100"
+    ],
+    "python.analysis.diagnosticSeverityOverrides": {
+        "reportLineTooLong": "none"
+    },
+    "[python]": {
+        "editor.rulers": [100]
+    },
+    "latex-workshop.latex.tools": [
+        {
+            "name": "tectonic",
+            "command": "tectonic",
+            "args": [
+                "--synctex",
+                "--keep-logs",
+                "--keep-intermediates",
+                "%DOC%"
+            ]
+        }
+    ],
+    "latex-workshop.latex.recipes": [
+        {
+            "name": "tectonic",
+            "tools": [
+                "tectonic"
+            ]
+        }
+    ],
+    "latex-workshop.latex.autoBuild.run": "onSave",
+    "latex-workshop.view.pdf.viewer": "tab",
+    "latex-workshop.latex.outDir": "%DIR%/build",
+    "latex-workshop.latex.clean.fileTypes": [
+        "*.aux",
+        "*.log",
+        "*.out",
+        "*.synctex.gz"
+    ],
+    "latex-workshop.latex.clean.subfolder.enabled": true,
+    "latex-workshop.formatting.latex": "latexindent"
+}

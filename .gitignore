@@ -121,7 +121,8 @@ celerybeat.pid
 
 # IDEs and editors
 .idea/
-.vscode/
+.vscode/*
+!.vscode/settings.json
 *.swp
 *.swo
 
@@ -136,6 +137,7 @@ driver/
 data/
 secure/
 query/
+report/build/
 
 
 extension/node_modules
