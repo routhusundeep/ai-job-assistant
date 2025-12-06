@@ -1,4 +1,5 @@
 {
+    "editor.formatOnSave": true,
     "python.formatting.provider": "black",
     "python.formatting.blackArgs": [
         "--line-length",
@@ -14,6 +15,10 @@
     },
     "[python]": {
         "editor.rulers": [100]
+    },
+    "[latex]": {
+        "editor.defaultFormatter": "James-Yu.latex-workshop",
+        "editor.formatOnSave": true
     },
     "latex-workshop.latex.tools": [
         {
