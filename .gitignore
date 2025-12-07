@@ -138,6 +138,7 @@ data/
 secure/
 query/
 report/build/
+submission/
 
 
 extension/node_modules
