@@ -48,6 +48,7 @@
         <p><strong>Score:</strong> <span x-text="formatScore(job.score)"></span></p>
         <p><strong>LLM Score:</strong> <span x-text="formatScore(job.llm_refined_score)"></span></p>
         <p><strong>Salary Range:</strong> <span x-text="formatSalary(job.salary_min, job.salary_max)"></span></p>
+        <p><strong>Posted:</strong> <span x-text="formatPostingTime(job.posting_time)"></span></p>
         <p><strong>Original Posting:</strong> <a :href="job.url" target="_blank" rel="noopener">View on LinkedIn</a></p>
       </div>
       <div class="panel">
@@ -131,6 +132,16 @@
             return '-';
           }
           return Number(value).toFixed(3);
+        },
+        formatPostingTime(value) {
+          if (!value) {
+            return 'Not provided';
+          }
+          const parsed = new Date(value);
+          if (Number.isNaN(parsed.getTime())) {
+            return 'Not provided';
+          }
+          return parsed.toLocaleString();
         },
       };
     }

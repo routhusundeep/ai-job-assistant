@@ -33,6 +33,7 @@
       <tr>
         <th @click="sort('title')">Role</th>
         <th @click="sort('company')">Company</th>
+        <th>Posted</th>
         <th>Recruiter</th>
         <th @click="sort('score')">Score</th>
         <th @click="sort('llm_refined_score')">LLM Score</th>
@@ -50,6 +51,7 @@
               <span x-text="job.company"></span>
             </template>
           </td>
+          <td x-text="formatPostingTime(job.posting_time)"></td>
           <td>
             <template x-if="job.recruiter_url">
               <a :href="job.recruiter_url" target="_blank" rel="noopener">Profile</a>
@@ -147,6 +149,16 @@
             return '-';
           }
           return Number(value).toFixed(3);
+        },
+        formatPostingTime(value) {
+          if (!value) {
+            return '-';
+          }
+          const parsed = new Date(value);
+          if (Number.isNaN(parsed.getTime())) {
+            return '-';
+          }
+          return parsed.toLocaleString();
         },
       };
     }

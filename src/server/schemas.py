@@ -31,6 +31,7 @@ class JobSummary(BaseModel):
     company: str
     company_url: Optional[str]
     recruiter_url: Optional[str]
+    posting_time: Optional[str]
     salary_min: Optional[float]
     salary_max: Optional[float]
     url: Optional[str]
@@ -54,6 +55,7 @@ class JobDetail(BaseModel):
     company: str
     company_url: Optional[str]
     recruiter_url: Optional[str]
+    posting_time: Optional[str]
     salary_min: Optional[float]
     salary_max: Optional[float]
     description: str

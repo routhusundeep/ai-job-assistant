@@ -7,6 +7,7 @@ import re
 import sys
 import time
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 from urllib.parse import ParseResult, parse_qsl, urlencode, urlparse, urlunparse
@@ -38,6 +39,7 @@ class JobPosting:
     url: str
     recruiter_url: Optional[str]
     company_url: Optional[str] = None
+    posting_time: Optional[str] = None
     salary_min: Optional[float] = None
     salary_max: Optional[float] = None
     apply_url: Optional[str] = None
@@ -254,6 +256,7 @@ class JobParserAgent:
 
             log_company = posting.company_url or posting.company
             recruiter_log = posting.recruiter_url or "(no recruiter)"
+            posting_time_log = posting.posting_time or "-"
             salary_log = "-"
             if posting.salary_min is not None:
                 if (
@@ -266,20 +269,22 @@ class JobParserAgent:
 
             if inserted:
                 LOGGER.info(
-                    "Captured job %s: %s @ %s recruiter: %s salary: %s",
+                    "Captured job %s: %s @ %s recruiter: %s salary: %s posted: %s",
                     job_id,
                     posting.title,
                     log_company,
                     recruiter_log,
                     salary_log,
+                    posting_time_log,
                 )
             else:
                 LOGGER.info(
-                    "Captured job %s already stored @ %s recruiter: %s salary: %s",
+                    "Captured job %s already stored @ %s recruiter: %s salary: %s posted: %s",
                     job_id,
                     log_company,
                     recruiter_log,
                     salary_log,
+                    posting_time_log,
                 )
 
             self._wait_between_jobs(page)
@@ -355,6 +360,7 @@ class JobParserAgent:
         recruiter_url = self._extract_recruiter_url(page)
         salary_min, salary_max = self._extract_salary_range(page)
         apply_url = self._extract_apply_url(page)
+        posting_time = self._extract_posting_time(page)
 
         return JobPosting(
             job_id=job_id,
@@ -362,6 +368,7 @@ class JobParserAgent:
             company=company_name,
             company_url=company_url,
             recruiter_url=recruiter_url,
+            posting_time=posting_time,
             salary_min=salary_min,
             salary_max=salary_max,
             apply_url=apply_url,
@@ -450,6 +457,51 @@ class JobParserAgent:
         if href:
             return href.split("?")[0]
         return None
+
+    def _extract_posting_time(self, page: Page) -> Optional[str]:
+        selectors = self.config.selectors.get("posting_time") or [
+            "div.mt2:nth-child(1) > span:nth-child(1) > span:nth-child(3)"
+        ]
+        for selector in selectors:
+            locator = page.locator(selector).first
+            if locator.count() == 0:
+                continue
+            try:
+                raw = locator.inner_text().strip()
+            except (PlaywrightTimeoutError, PlaywrightError):
+                continue
+            parsed = self._parse_posting_time(raw)
+            if parsed:
+                return parsed
+        return None
+
+    @staticmethod
+    def _parse_posting_time(raw: str) -> Optional[str]:
+        if not raw:
+            return None
+        normalized = re.sub(r"\s+", " ", raw).strip()
+        normalized = re.sub(r"^Reposted\s+", "", normalized, flags=re.IGNORECASE)
+        match = re.search(
+            r"(?i)(\d+)\s+(hour|hours|day|days|week|weeks|month|months)\s+ago",
+            normalized,
+        )
+        if not match:
+            return None
+
+        value = int(match.group(1))
+        unit = match.group(2).lower()
+        delta: timedelta
+        if "hour" in unit:
+            delta = timedelta(hours=value)
+        elif "day" in unit:
+            delta = timedelta(days=value)
+        elif "week" in unit:
+            delta = timedelta(weeks=value)
+        else:
+            delta = timedelta(days=value * 30)
+
+        timestamp = datetime.now(timezone.utc) - delta
+        return timestamp.isoformat()
 
     def _resolve_company_info(
         self,

@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS job_postings (
     company TEXT NOT NULL,
     company_url TEXT,
     recruiter_url TEXT,
+    posting_time TEXT,
     salary_min REAL,
     salary_max REAL,
     description TEXT NOT NULL,
@@ -90,6 +91,7 @@ def ensure_schema(database_path: Path) -> None:
     database_path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(database_path) as conn:
         conn.executescript(DDL)
+        _add_column_if_missing(conn, "job_postings", "posting_time", "TEXT")
         _add_column_if_missing(conn, "job_postings", "apply_url", "TEXT")
         _add_column_if_missing(conn, "job_postings", "preferred_resume_version_id", "TEXT")
         conn.commit()
@@ -114,6 +116,7 @@ def insert_job(database_path: Path, job: Mapping[str, Any]) -> bool:
                 company,
                 company_url,
                 recruiter_url,
+                posting_time,
                 salary_min,
                 salary_max,
                 description,
@@ -126,6 +129,7 @@ def insert_job(database_path: Path, job: Mapping[str, Any]) -> bool:
                 :company,
                 :company_url,
                 :recruiter_url,
+                :posting_time,
                 :salary_min,
                 :salary_max,
                 :description,
@@ -314,6 +318,7 @@ def fetch_jobs_with_scores(
                 jp.company,
                 jp.company_url,
                 jp.recruiter_url,
+                jp.posting_time,
                 jp.salary_min,
                 jp.salary_max,
                 jp.url,
@@ -341,6 +346,7 @@ def fetch_jobs_with_scores(
                 "company": row["company"],
                 "company_url": row["company_url"],
                 "recruiter_url": row["recruiter_url"],
+                "posting_time": row["posting_time"],
                 "salary_min": row["salary_min"],
                 "salary_max": row["salary_max"],
                 "url": row["url"],
@@ -368,6 +374,7 @@ def fetch_job_with_score(database_path: Path, job_key: str) -> Optional[Dict[str
             jp.company,
             jp.company_url,
             jp.recruiter_url,
+            jp.posting_time,
             jp.salary_min,
             jp.salary_max,
             jp.description,
@@ -404,6 +411,7 @@ def fetch_job_with_score(database_path: Path, job_key: str) -> Optional[Dict[str
         "company": row["company"],
         "company_url": row["company_url"],
         "recruiter_url": row["recruiter_url"],
+        "posting_time": row["posting_time"],
         "salary_min": row["salary_min"],
         "salary_max": row["salary_max"],
         "description": row["description"],
