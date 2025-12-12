@@ -24,6 +24,15 @@ class SortOrder(str, Enum):
     desc = "desc"
 
 
+class DateFilter(str, Enum):
+    """Supported posting-time filters for job listings."""
+
+    any = "any"
+    day = "day"
+    week = "week"
+    month = "month"
+
+
 class JobSummary(BaseModel):
     job_key: str
     job_id: Optional[str]

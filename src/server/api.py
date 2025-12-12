@@ -15,6 +15,7 @@ from .agent_routes import router as agent_router
 from .extension_routes import router as extension_router
 from .config import get_database_path
 from .schemas import (
+    DateFilter,
     JobDetailResponse,
     JobListResponse,
     JobSummary,
@@ -46,6 +47,9 @@ async def list_jobs(
     sort_by: SortField = Query(SortField.score),
     order: SortOrder = Query(SortOrder.desc),
     search: str | None = Query(None, description="Filter by score, title, or company."),
+    posted_within: DateFilter = Query(
+        DateFilter.any, description="Restrict results by posting recency."
+    ),
 ) -> JobListResponse:
     """Return paginated job summaries with score metadata."""
 
@@ -56,6 +60,7 @@ async def list_jobs(
         sort_by.value,
         order.value,
         search,
+        _date_filter_days(posted_within),
     )
 
     summaries: List[JobSummary] = [JobSummary(**job) for job in jobs_raw]
@@ -153,3 +158,14 @@ def _read_template(name: str) -> str:
     if not path.exists():
         raise FileNotFoundError(f"Missing template: {path}")
     return path.read_text(encoding="utf-8")
+
+
+def _date_filter_days(date_filter: DateFilter) -> int | None:
+    """Convert a DateFilter value to a day window."""
+
+    mapping = {
+        DateFilter.day: 1,
+        DateFilter.week: 7,
+        DateFilter.month: 30,
+    }
+    return mapping.get(date_filter, None)

@@ -270,6 +270,7 @@ def fetch_jobs_with_scores(
     sort_by: str,
     order: str,
     search: Optional[str],
+    posted_within_days: Optional[int] = None,
 ) -> Tuple[List[Dict[str, Any]], int]:
     """Return paginated job postings joined with similarity scores."""
 
@@ -293,6 +294,12 @@ def fetch_jobs_with_scores(
                 "(jp.title LIKE ? OR jp.company LIKE ? OR CAST(s.score AS TEXT) LIKE ?)"
             )
             params.extend([pattern, pattern, pattern])
+
+    if posted_within_days is not None:
+        where_clauses.append(
+            "jp.posting_time IS NOT NULL AND datetime(jp.posting_time) >= datetime('now', ?)"
+        )
+        params.append(f"-{posted_within_days} days")
 
     where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
     offset = (page - 1) * page_size
